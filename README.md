@@ -4,6 +4,8 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that gi
 
 Built for students. Ask Claude natural questions about your courses, grades, assignments, and deadlines instead of clicking through Moodle's UI.
 
+[![Moodle MCP server](https://glama.ai/mcp/servers/Jawadh-Salih/moodle-mcp-server/badges/card.svg)](https://glama.ai/mcp/servers/Jawadh-Salih/moodle-mcp-server)
+
 ---
 
 ## What You Can Do
