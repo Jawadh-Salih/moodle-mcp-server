@@ -1,6 +1,6 @@
 # Binaries
-moodle-mcp
-moodle-mcp-server
+/moodle-mcp
+/moodle-mcp-server
 *.exe
 /build/
 /dist/
