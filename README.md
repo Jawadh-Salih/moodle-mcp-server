@@ -45,7 +45,7 @@ Built for students. Ask Claude natural questions about your courses, grades, ass
 ## Installation
 
 ```bash
-git clone https://github.com/jawadh/moodle-mcp-server.git
+git clone https://github.com/Jawadh-Salih/moodle-mcp-server.git
 cd moodle-mcp-server
 make build
 ```

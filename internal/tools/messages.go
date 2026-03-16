@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jawadh/moodle-mcp-server/internal/api"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
 )
 
 // message mirrors the API response shape from core_message_get_messages.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jawadh/moodle-mcp-server/internal/api"
-	"github.com/jawadh/moodle-mcp-server/internal/config"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/config"
 )
 
 // --- Login Tool ---

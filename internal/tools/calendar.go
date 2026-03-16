@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jawadh/moodle-mcp-server/internal/api"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
 )
 
 // calendarEvent mirrors the API response shape from core_calendar_get_calendar_events.

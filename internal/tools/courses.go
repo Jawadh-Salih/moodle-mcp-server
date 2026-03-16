@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jawadh/moodle-mcp-server/internal/api"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
 )
 
 // CourseRef is a lightweight course identifier used to avoid N+1 API lookups.

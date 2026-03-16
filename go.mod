@@ -1,4 +1,4 @@
-module github.com/jawadh/moodle-mcp-server
+module github.com/Jawadh-Salih/moodle-mcp-server
 
 go 1.23
 

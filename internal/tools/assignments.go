@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jawadh/moodle-mcp-server/internal/api"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
 )
 
 // assignment mirrors the API response shape from mod_assign_get_assignments.

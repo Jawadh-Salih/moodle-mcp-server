@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jawadh/moodle-mcp-server/internal/api"
+	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
 )
 
 // --- Get Grades Tool ---
