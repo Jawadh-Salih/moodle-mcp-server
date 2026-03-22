@@ -419,96 +419,185 @@ func (s *RESTServer) getIntQuery(r *http.Request, param string) int {
 }
 
 func getOpenAPISpec() map[string]interface{} {
+	jsonBody := func(props map[string]interface{}, required []string) map[string]interface{} {
+		return map[string]interface{}{
+			"required": true,
+			"content": map[string]interface{}{
+				"application/json": map[string]interface{}{
+					"schema": map[string]interface{}{
+						"type":       "object",
+						"properties": props,
+						"required":   required,
+					},
+				},
+			},
+		}
+	}
+	intParam := func(name, desc string, required bool) map[string]interface{} {
+		return map[string]interface{}{
+			"name": name, "in": "query", "required": required,
+			"description": desc,
+			"schema":      map[string]interface{}{"type": "integer"},
+		}
+	}
+	boolParam := func(name, desc string) map[string]interface{} {
+		return map[string]interface{}{
+			"name": name, "in": "query", "required": false,
+			"description": desc,
+			"schema":      map[string]interface{}{"type": "boolean"},
+		}
+	}
+	ok := map[string]interface{}{"200": map[string]interface{}{"description": "Success"}}
+
 	return map[string]interface{}{
 		"openapi": "3.0.0",
 		"info": map[string]interface{}{
 			"title":       "Moodle API",
-			"description": "REST API for Moodle LMS integration",
-			"version":     "1.0.0",
+			"description": "REST API for Moodle LMS integration — supports Claude, ChatGPT, Gemini, and any HTTP client",
+			"version":     "1.2.0",
 		},
 		"servers": []map[string]interface{}{
-			{
-				"url":         "http://localhost:8080",
-				"description": "Local development server",
-			},
+			{"url": "http://localhost:8080", "description": "Local development server"},
 		},
 		"paths": map[string]interface{}{
+			// Auth
 			"/api/login": map[string]interface{}{
 				"post": map[string]interface{}{
-					"summary":     "Login to Moodle",
-					"operationId": "login",
-					"requestBody": map[string]interface{}{
-						"required": true,
-						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
-								"schema": map[string]interface{}{
-									"type": "object",
-									"properties": map[string]interface{}{
-										"moodle_url": map[string]interface{}{"type": "string"},
-										"username":   map[string]interface{}{"type": "string"},
-										"password":   map[string]interface{}{"type": "string"},
-									},
-									"required": []string{"moodle_url", "username", "password"},
-								},
-							},
-						},
-					},
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Logged in successfully",
-						},
-					},
+					"summary": "Login to Moodle", "operationId": "login",
+					"requestBody": jsonBody(map[string]interface{}{
+						"moodle_url": map[string]interface{}{"type": "string", "example": "https://online.uom.lk"},
+						"username":   map[string]interface{}{"type": "string"},
+						"password":   map[string]interface{}{"type": "string"},
+					}, []string{"moodle_url", "username", "password"}),
+					"responses": ok,
 				},
 			},
+			"/api/site-info": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get Moodle site and user info", "operationId": "getSiteInfo",
+					"responses": ok,
+				},
+			},
+			"/api/user-profile": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get current user profile", "operationId": "getUserProfile",
+					"responses": ok,
+				},
+			},
+			// Courses
 			"/api/courses": map[string]interface{}{
 				"get": map[string]interface{}{
-					"summary":     "List enrolled courses",
-					"operationId": "listCourses",
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "List of courses",
-						},
-					},
+					"summary": "List all enrolled courses", "operationId": "listCourses",
+					"responses": ok,
 				},
 			},
+			"/api/courses/details": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get course details", "operationId": "getCourseDetails",
+					"parameters": []map[string]interface{}{intParam("course_id", "Course ID", true)},
+					"responses":  ok,
+				},
+			},
+			"/api/courses/contents": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get course contents (sections, resources, activities)", "operationId": "getCourseContents",
+					"parameters": []map[string]interface{}{intParam("course_id", "Course ID", true)},
+					"responses":  ok,
+				},
+			},
+			// Grades
 			"/api/grades": map[string]interface{}{
 				"get": map[string]interface{}{
-					"summary":     "Get grades for a course",
-					"operationId": "getGrades",
-					"parameters": []map[string]interface{}{
-						{
-							"name":        "course_id",
-							"in":          "query",
-							"required":    true,
-							"schema":      map[string]interface{}{"type": "integer"},
-							"description": "Course ID",
-						},
-					},
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Grades data",
-						},
-					},
+					"summary": "Get grades for a course", "operationId": "getGrades",
+					"parameters": []map[string]interface{}{intParam("course_id", "Course ID", true)},
+					"responses":  ok,
 				},
 			},
+			"/api/grades/overview": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get grade summary across all courses", "operationId": "getGradesOverview",
+					"responses": ok,
+				},
+			},
+			// Assignments
 			"/api/assignments": map[string]interface{}{
 				"get": map[string]interface{}{
-					"summary":     "Get assignments for a course",
-					"operationId": "getAssignments",
+					"summary": "Get assignments for a course", "operationId": "getAssignments",
+					"parameters": []map[string]interface{}{intParam("course_id", "Course ID", true)},
+					"responses":  ok,
+				},
+			},
+			"/api/assignments/upcoming": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get upcoming assignments across all courses", "operationId": "getUpcomingAssignments",
+					"parameters": []map[string]interface{}{intParam("days_ahead", "Days to look ahead (default: 30)", false)},
+					"responses":  ok,
+				},
+			},
+			"/api/assignments/submit": map[string]interface{}{
+				"post": map[string]interface{}{
+					"summary": "Submit a text assignment", "operationId": "submitAssignment",
+					"requestBody": jsonBody(map[string]interface{}{
+						"assignment_id": map[string]interface{}{"type": "integer", "description": "Assignment ID"},
+						"text":          map[string]interface{}{"type": "string", "description": "Submission text (HTML supported)"},
+					}, []string{"assignment_id", "text"}),
+					"responses": ok,
+				},
+			},
+			"/api/assignments/update": map[string]interface{}{
+				"post": map[string]interface{}{
+					"summary": "Update (overwrite) an existing assignment submission", "operationId": "updateAssignment",
+					"requestBody": jsonBody(map[string]interface{}{
+						"assignment_id": map[string]interface{}{"type": "integer", "description": "Assignment ID"},
+						"text":          map[string]interface{}{"type": "string", "description": "New submission text (HTML supported)"},
+					}, []string{"assignment_id", "text"}),
+					"responses": ok,
+				},
+			},
+			// Journal
+			"/api/journal/entry": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "Get current journal entry (for Journal activities e.g. Technical Article Review)",
+					"operationId": "getJournalEntry",
+					"parameters":  []map[string]interface{}{intParam("journal_id", "Journal module ID (from course contents, modname=journal)", true)},
+					"responses":   ok,
+				},
+			},
+			"/api/journal/submit": map[string]interface{}{
+				"post": map[string]interface{}{
+					"summary":     "Submit or update a journal entry (for Journal activities e.g. Technical Article Review, Research Paper Review)",
+					"operationId": "submitJournal",
+					"requestBody": jsonBody(map[string]interface{}{
+						"journal_id": map[string]interface{}{"type": "integer", "description": "Journal module ID (from course contents, modname=journal)"},
+						"text":       map[string]interface{}{"type": "string", "description": "Journal entry text (HTML supported)"},
+					}, []string{"journal_id", "text"}),
+					"responses": ok,
+				},
+			},
+			// Calendar
+			"/api/calendar/events": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get calendar events", "operationId": "getCalendarEvents",
+					"parameters": []map[string]interface{}{intParam("days_ahead", "Days to look ahead (default: 30)", false)},
+					"responses":  ok,
+				},
+			},
+			"/api/calendar/deadlines": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get upcoming deadlines sorted by urgency", "operationId": "getUpcomingDeadlines",
+					"parameters": []map[string]interface{}{intParam("days_ahead", "Days to look ahead (default: 14)", false)},
+					"responses":  ok,
+				},
+			},
+			// Notifications
+			"/api/notifications": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Get messages and notifications", "operationId": "getNotifications",
 					"parameters": []map[string]interface{}{
-						{
-							"name":        "course_id",
-							"in":          "query",
-							"required":    true,
-							"schema":      map[string]interface{}{"type": "integer"},
-							"description": "Course ID",
-						},
+						intParam("limit", "Max notifications to return (default: 20)", false),
+						boolParam("unread_only", "Only return unread notifications (default: true)"),
 					},
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Assignments",
-						},
-					},
+					"responses": ok,
 				},
 			},
 		},

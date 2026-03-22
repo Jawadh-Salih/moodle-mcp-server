@@ -1,196 +1,204 @@
 # Google Gemini Setup Guide
 
-Use Moodle MCP Server with Google Gemini via the REST API and Google Extensions.
+Use Moodle MCP Server with Google Gemini via the REST API and Google Apps Script.
 
 ## Step 1: Start the REST API Server
-
-First, you need to run the REST API server on your machine or a cloud server.
 
 ### On Your Mac/Linux
 
 ```bash
-cd ~/fajr
-go run ./cmd/moodle-mcp/ -mode rest -port 8080
+cd ~/moodle-mcp-server
+./moodle-mcp -mode rest -port 8080
 ```
 
 ### On Windows (PowerShell)
 
 ```powershell
 cd C:\Users\YourName\moodle-mcp-server
-go run .\cmd\moodle-mcp\ -mode rest -port 8080
-```
-
-You should see:
-```
-Starting REST API on port 8080
-OpenAPI docs at http://localhost:8080/api/docs
+.\moodle-mcp.exe -mode rest -port 8080
 ```
 
 ## Step 2: Expose Your Server to the Internet
 
-For Gemini to access it, the server needs to be reachable from the internet.
-
-### Option A: Use ngrok (Easiest for Testing)
+### Option A: ngrok (Easiest for Testing)
 
 ```bash
 brew install ngrok  # macOS
-# or download from https://ngrok.com
-
 ngrok http 8080
 ```
 
 You'll get a URL like: `https://abc123.ngrok.io`
 
-### Option B: Deploy to Cloud (Better for Production)
+### Option B: Deploy to Cloud (Recommended)
 
-See `DEPLOYMENT_GUIDE.md` for Docker and cloud hosting options.
+See `DEPLOYMENT_GUIDE.md`. Google Cloud Run is the best fit for Gemini.
 
-## Step 3: Access Gemini with Extensions
-
-Google Gemini uses a different extension system than ChatGPT.
-
-### Option A: Use via Google Apps Script (Recommended)
+## Step 3: Set Up Google Apps Script
 
 1. Go to [Google Apps Script](https://script.google.com)
 2. Create a new project
-3. Paste this code:
+3. Paste the full script below (replace `YOUR_URL` with your server URL)
+4. **Save** and **Deploy as web app**
 
 ```javascript
-function getMoodleCourses() {
-  const response = UrlFetchApp.fetch("https://YOUR_URL/api/courses", {
-    method: "get",
-    muteHttpExceptions: true,
-    headers: {
-      "Content-Type": "application/json"
-    }
-  });
-  return JSON.parse(response.getContentText());
-}
+const MOODLE_API = "https://YOUR_URL";
+
+// ── Authentication ──────────────────────────────────────────────
 
 function moodleLogin(moodleUrl, username, password) {
-  const response = UrlFetchApp.fetch("https://YOUR_URL/api/login", {
+  return post_("/api/login", { moodle_url: moodleUrl, username, password });
+}
+
+function getSiteInfo() {
+  return get_("/api/site-info");
+}
+
+function getUserProfile() {
+  return get_("/api/user-profile");
+}
+
+// ── Courses ─────────────────────────────────────────────────────
+
+function listCourses() {
+  return get_("/api/courses");
+}
+
+function getCourseDetails(courseId) {
+  return get_("/api/courses/details?course_id=" + courseId);
+}
+
+function getCourseContents(courseId) {
+  // Use this to find journal IDs (look for modname=journal in the response)
+  return get_("/api/courses/contents?course_id=" + courseId);
+}
+
+// ── Grades ──────────────────────────────────────────────────────
+
+function getGrades(courseId) {
+  return get_("/api/grades?course_id=" + courseId);
+}
+
+function getGradesOverview() {
+  return get_("/api/grades/overview");
+}
+
+// ── Assignments ─────────────────────────────────────────────────
+
+function getAssignments(courseId) {
+  return get_("/api/assignments?course_id=" + courseId);
+}
+
+function getUpcomingAssignments(daysAhead = 30) {
+  return get_("/api/assignments/upcoming?days_ahead=" + daysAhead);
+}
+
+function submitAssignment(assignmentId, text) {
+  return post_("/api/assignments/submit", { assignment_id: assignmentId, text });
+}
+
+function updateAssignment(assignmentId, text) {
+  return post_("/api/assignments/update", { assignment_id: assignmentId, text });
+}
+
+// ── Journal ─────────────────────────────────────────────────────
+// Journal activities include: Technical Article Review, Research Paper Review, etc.
+// To find journal_id: call getCourseContents(courseId) and look for modules where modname="journal"
+
+function getJournalEntry(journalId) {
+  return get_("/api/journal/entry?journal_id=" + journalId);
+}
+
+function submitJournal(journalId, text) {
+  return post_("/api/journal/submit", { journal_id: journalId, text });
+}
+
+// ── Calendar ────────────────────────────────────────────────────
+
+function getCalendarEvents(daysAhead = 30) {
+  return get_("/api/calendar/events?days_ahead=" + daysAhead);
+}
+
+function getUpcomingDeadlines(daysAhead = 14) {
+  return get_("/api/calendar/deadlines?days_ahead=" + daysAhead);
+}
+
+// ── Notifications ───────────────────────────────────────────────
+
+function getNotifications(limit = 20, unreadOnly = true) {
+  return get_("/api/notifications?limit=" + limit + "&unread_only=" + unreadOnly);
+}
+
+// ── Internal helpers ────────────────────────────────────────────
+
+function get_(path) {
+  const resp = UrlFetchApp.fetch(MOODLE_API + path, {
+    method: "get", muteHttpExceptions: true,
+    headers: { "Content-Type": "application/json" }
+  });
+  return JSON.parse(resp.getContentText());
+}
+
+function post_(path, body) {
+  const resp = UrlFetchApp.fetch(MOODLE_API + path, {
     method: "post",
-    payload: JSON.stringify({
-      moodle_url: moodleUrl,
-      username: username,
-      password: password
-    }),
-    headers: {
-      "Content-Type": "application/json"
-    },
+    payload: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
     muteHttpExceptions: true
   });
-  return JSON.parse(response.getContentText());
-}
-
-function getMoodleGrades() {
-  const response = UrlFetchApp.fetch("https://YOUR_URL/api/grades/overview", {
-    method: "get",
-    muteHttpExceptions: true
-  });
-  return JSON.parse(response.getContentText());
-}
-
-function getMoodleAssignments(daysAhead = 30) {
-  const response = UrlFetchApp.fetch(`https://YOUR_URL/api/assignments/upcoming?days_ahead=${daysAhead}`, {
-    method: "get",
-    muteHttpExceptions: true
-  });
-  return JSON.parse(response.getContentText());
-}
-
-function getMoodleDeadlines(daysAhead = 14) {
-  const response = UrlFetchApp.fetch(`https://YOUR_URL/api/calendar/deadlines?days_ahead=${daysAhead}`, {
-    method: "get",
-    muteHttpExceptions: true
-  });
-  return JSON.parse(response.getContentText());
-}
-
-function getMoodleNotifications(limit = 20) {
-  const response = UrlFetchApp.fetch(`https://YOUR_URL/api/notifications?limit=${limit}`, {
-    method: "get",
-    muteHttpExceptions: true
-  });
-  return JSON.parse(response.getContentText());
+  return JSON.parse(resp.getContentText());
 }
 ```
-
-4. **Save** and **Deploy** as API
-5. In Gemini, you can reference these functions:
-   - "Call getMoodleCourses()"
-   - "Call moodleLogin(...)"
-   - etc.
-
-### Option B: Direct REST API Usage
-
-Gemini can also call REST APIs directly. In your Gemini chat:
-
-```
-Call this API: https://YOUR_URL/api/courses
-Method: GET
-```
-
-Gemini will make the request and show you the results.
 
 ## Step 4: Test with Gemini
 
-1. Go to [Google Gemini Advanced](https://gemini.google.com)
-2. Try these prompts:
-   - "Use the Moodle API to show my courses"
-   - "Call the login function with my Moodle credentials"
-   - "Get my grade overview"
-   - "Show me upcoming assignments"
+In [Google Gemini Advanced](https://gemini.google.com), try:
 
-## Step 5: Use in Google Workspace
+- "Use the Moodle API to log in with my credentials"
+- "Call listCourses() and show me what courses I have"
+- "Get my grades overview"
+- "What assignments are due in the next 7 days?"
+- "Get the course contents for course 31778 to find my journal IDs"
+- "Submit my journal entry (ID 527772) with this text: ..."
+- "Read my current Technical Article Review 2 entry (journal ID 527772)"
 
-You can integrate Moodle data into:
-- **Google Sheets**: Fetch data with `=ImportData()` or Apps Script
-- **Google Docs**: Embed Moodle data via Apps Script
-- **Google Classroom**: Sync assignments and deadlines
-- **Gmail**: Create filters/rules based on Moodle data
-
----
-
-## Option C: Use Gemini's Scheduled Functions
-
-For automated daily updates, you can schedule Apps Script functions:
+## Step 5: Set Up Automated Reminders (Optional)
 
 1. In Google Apps Script, click **Triggers** (⏰)
 2. Click **Create new trigger**
-3. Set up a daily trigger for:
-   - `getMoodleDeadlines()` to send you daily reminders
-   - `getMoodleAssignments()` to check for new work
+3. Set a daily trigger for:
+
+```javascript
+function dailyMoodleCheck() {
+  const deadlines = getUpcomingDeadlines(7);
+  const notifications = getNotifications(10, true);
+  // Send yourself an email summary
+  MailApp.sendEmail(
+    Session.getActiveUser().getEmail(),
+    "Daily Moodle Summary",
+    "Deadlines: " + JSON.stringify(deadlines, null, 2) +
+    "\n\nNotifications: " + JSON.stringify(notifications, null, 2)
+  );
+}
+```
+
+## Step 6: Use in Google Workspace
+
+- **Google Sheets**: Pull grades into a spreadsheet with `getGrades()` or `getGradesOverview()`
+- **Google Docs**: Draft and submit journal entries directly via `submitJournal()`
+- **Gmail**: Auto-trigger reminders via `getUpcomingDeadlines()`
 
 ---
 
 ## Troubleshooting
 
-**"URL not reachable" error?**
-- Make sure your REST server is running
-- If using ngrok, make sure it's still active
-- Check that the URL matches your server URL
-- ngrok URLs expire - get a new one if needed
+**"URL not reachable"** — Make sure your REST server is running and ngrok is active (ngrok URLs expire).
 
-**Apps Script says "Authorization failed"?**
-- Make sure your Moodle server is accessible
-- Check that `MOODLE_URL` in your REST API is correct
-- Try testing the endpoint in a browser first
+**"Authorization failed" in Apps Script** — Test the endpoint in a browser first: `https://YOUR_URL/health`
 
-**Want to use with Gemini in Google Search?**
-- Gemini's search extensions are limited
-- For now, use the Google Apps Script approach above
-- Or deploy to cloud and access via browser
+**Can't find journal ID** — Call `getCourseContents(courseId)` and look for entries where `modname` is `"journal"`. The `id` field is your `journal_id`.
 
 ---
 
 ## Production: Deploy for 24/7 Access
 
-For production, see `DEPLOYMENT_GUIDE.md` to deploy to:
-- Google Cloud Run (easiest for Gemini)
-- AWS Lambda
-- Heroku
-- DigitalOcean
-- Docker
-
-**Recommended for Gemini:** Google Cloud Run - it integrates seamlessly with Google services!
+See `DEPLOYMENT_GUIDE.md`. **Google Cloud Run** is recommended for Gemini as it integrates seamlessly with Google services.
