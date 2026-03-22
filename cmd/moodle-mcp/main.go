@@ -310,6 +310,42 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 		},
 	)
 
+	// ── Get Journal Entry ─────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("get_journal_entry",
+			mcp.WithDescription("Get the current text of a journal entry (modname=journal activities). Use course contents to find the journal ID."),
+			mcp.WithNumber("journal_id", mcp.Required(), mcp.Description("The journal module ID from course contents (modname=journal)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "journal_id")
+			result, err := tools.HandleGetJournalEntry(ctx, client, tools.GetJournalEntryInput{JournalID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Submit Journal Entry ──────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("submit_journal",
+			mcp.WithDescription("Submit or update a journal entry (modname=journal activities such as Technical Article Review, Research Paper Review). Use course contents to find the journal ID."),
+			mcp.WithNumber("journal_id", mcp.Required(), mcp.Description("The journal module ID from course contents (modname=journal)")),
+			mcp.WithString("text", mcp.Required(), mcp.Description("The text content to submit (HTML supported)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "journal_id")
+			text := mcp.ParseString(req, "text", "")
+			result, err := tools.HandleSubmitJournal(ctx, client, tools.SubmitJournalInput{
+				JournalID: id, Text: text,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
 	// ── Get Calendar Events ───────────────────────────────────────
 	s.AddTool(
 		mcp.NewTool("get_calendar_events",

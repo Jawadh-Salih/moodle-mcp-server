@@ -67,6 +67,8 @@ func (s *RESTServer) registerRoutes() {
 	s.mux.HandleFunc("/api/assignments/upcoming", s.handleUpcomingAssignments)
 	s.mux.HandleFunc("/api/assignments/submit", s.handleSubmitAssignment)
 	s.mux.HandleFunc("/api/assignments/update", s.handleUpdateAssignment)
+	s.mux.HandleFunc("/api/journal/entry", s.handleGetJournalEntry)
+	s.mux.HandleFunc("/api/journal/submit", s.handleSubmitJournal)
 
 	// Calendar
 	s.mux.HandleFunc("/api/calendar/events", s.handleCalendarEvents)
@@ -296,6 +298,42 @@ func (s *RESTServer) handleUpdateAssignment(w http.ResponseWriter, r *http.Reque
 	result, err := tools.HandleUpdateAssignment(ctx, s.client, tools.UpdateAssignmentInput{
 		AssignmentID: req.AssignmentID,
 		Text:         req.Text,
+	})
+	s.jsonResponse(w, result, err)
+}
+
+func (s *RESTServer) handleGetJournalEntry(w http.ResponseWriter, r *http.Request) {
+	if !s.client.IsAuthenticated() {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	journalID := s.getIntQuery(r, "journal_id")
+	ctx := r.Context()
+	result, err := tools.HandleGetJournalEntry(ctx, s.client, tools.GetJournalEntryInput{JournalID: journalID})
+	s.jsonResponse(w, result, err)
+}
+
+func (s *RESTServer) handleSubmitJournal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.client.IsAuthenticated() {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		JournalID int    `json:"journal_id"`
+		Text      string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	result, err := tools.HandleSubmitJournal(ctx, s.client, tools.SubmitJournalInput{
+		JournalID: req.JournalID,
+		Text:      req.Text,
 	})
 	s.jsonResponse(w, result, err)
 }
