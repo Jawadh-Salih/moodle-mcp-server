@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/jawadh/moodle-mcp-server/internal/api"
 	"github.com/jawadh/moodle-mcp-server/internal/tools"
@@ -67,6 +66,7 @@ func (s *RESTServer) registerRoutes() {
 	s.mux.HandleFunc("/api/assignments", s.handleGetAssignments)
 	s.mux.HandleFunc("/api/assignments/upcoming", s.handleUpcomingAssignments)
 	s.mux.HandleFunc("/api/assignments/submit", s.handleSubmitAssignment)
+	s.mux.HandleFunc("/api/assignments/update", s.handleUpdateAssignment)
 
 	// Calendar
 	s.mux.HandleFunc("/api/calendar/events", s.handleCalendarEvents)
@@ -265,6 +265,35 @@ func (s *RESTServer) handleSubmitAssignment(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 	result, err := tools.HandleSubmitAssignment(ctx, s.client, tools.SubmitAssignmentInput{
+		AssignmentID: req.AssignmentID,
+		Text:         req.Text,
+	})
+	s.jsonResponse(w, result, err)
+}
+
+func (s *RESTServer) handleUpdateAssignment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !s.client.IsAuthenticated() {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		AssignmentID int    `json:"assignment_id"`
+		Text         string `json:"text"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	result, err := tools.HandleUpdateAssignment(ctx, s.client, tools.UpdateAssignmentInput{
 		AssignmentID: req.AssignmentID,
 		Text:         req.Text,
 	})

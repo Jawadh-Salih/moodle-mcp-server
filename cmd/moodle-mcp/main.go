@@ -121,9 +121,9 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 			mcp.WithString("password", mcp.Required(), mcp.Description("Your Moodle password")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			url, _ := req.RequireString("moodle_url")
-			user, _ := req.RequireString("username")
-			pass, _ := req.RequireString("password")
+			url := mcp.ParseString(req, "moodle_url", "")
+			user := mcp.ParseString(req, "username", "")
+			pass := mcp.ParseString(req, "password", "")
 			result, err := tools.HandleLogin(ctx, client, tools.LoginInput{
 				MoodleURL: url, Username: user, Password: pass,
 			})
@@ -279,8 +279,28 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			id := intArg(req, "assignment_id")
-			text, _ := req.RequireString("text")
+			text := mcp.ParseString(req, "text", "")
 			result, err := tools.HandleSubmitAssignment(ctx, client, tools.SubmitAssignmentInput{
+				AssignmentID: id, Text: text,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Update Assignment ─────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("update_assignment",
+			mcp.WithDescription("Update (overwrite) an existing online text assignment submission."),
+			mcp.WithNumber("assignment_id", mcp.Required(), mcp.Description("The assignment ID to update")),
+			mcp.WithString("text", mcp.Required(), mcp.Description("The new text content to replace the existing submission")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "assignment_id")
+			text := mcp.ParseString(req, "text", "")
+			result, err := tools.HandleUpdateAssignment(ctx, client, tools.UpdateAssignmentInput{
 				AssignmentID: id, Text: text,
 			})
 			if err != nil {

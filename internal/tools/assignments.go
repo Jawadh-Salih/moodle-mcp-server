@@ -216,6 +216,41 @@ func HandleSubmitAssignment(ctx context.Context, client *api.Client, input Submi
 		input.AssignmentID, time.Now().Format("2006-01-02 15:04:05")), nil
 }
 
+// --- Update Assignment Tool ---
+
+type UpdateAssignmentInput struct {
+	AssignmentID int    `json:"assignment_id" jsonschema:"description=The assignment ID to update"`
+	Text         string `json:"text" jsonschema:"description=The new text content to replace the existing submission"`
+}
+
+func HandleUpdateAssignment(ctx context.Context, client *api.Client, input UpdateAssignmentInput) (string, error) {
+	if !client.IsAuthenticated() {
+		return "", api.ErrNotAuthenticated
+	}
+
+	if input.AssignmentID == 0 {
+		return "", fmt.Errorf("assignment_id is required")
+	}
+	if input.Text == "" {
+		return "", fmt.Errorf("text content is required")
+	}
+
+	params := map[string]string{
+		"assignmentid":                         fmt.Sprintf("%d", input.AssignmentID),
+		"plugindata[onlinetext_editor][text]":   input.Text,
+		"plugindata[onlinetext_editor][format]": "1",
+		"plugindata[onlinetext_editor][itemid]": "0",
+	}
+
+	_, err := client.Call(ctx, "mod_assign_save_submission", params)
+	if err != nil {
+		return "", fmt.Errorf("updating assignment: %w", err)
+	}
+
+	return fmt.Sprintf("Assignment %d updated successfully at %s",
+		input.AssignmentID, time.Now().Format("2006-01-02 15:04:05")), nil
+}
+
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s

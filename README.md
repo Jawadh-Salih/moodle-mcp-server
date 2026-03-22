@@ -1,7 +1,5 @@
 # Moodle MCP Server
 
-> ⚠️ **Disclaimer:** This is a completely vibe coded implementation. Use with caution — it has not been formally reviewed or production-hardened. Test thoroughly before using with real Moodle credentials or sensitive data.
-
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server + REST API that connects **Claude, ChatGPT, Google Gemini, and any AI model** to any Moodle LMS instance. Built in Go.
 
 Students can interact with their Moodle account through their favorite AI — view courses, check grades, track deadlines, submit assignments, and read notifications.
