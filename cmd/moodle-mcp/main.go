@@ -85,7 +85,7 @@ func runMCPServer(client *api.Client) {
 	// Create MCP server
 	s := mcpserver.NewMCPServer(
 		"moodle-mcp-server",
-		"1.0.0",
+		"1.2.0",
 		mcpserver.WithToolCapabilities(true),
 	)
 
