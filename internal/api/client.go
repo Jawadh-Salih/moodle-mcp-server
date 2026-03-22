@@ -63,6 +63,13 @@ func (c *Client) GetBaseURL() string {
 	return c.baseURL
 }
 
+// GetToken returns the current authentication token.
+func (c *Client) GetToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.token
+}
+
 // Call makes a request to the Moodle REST API.
 // function is the wsfunction name (e.g. "core_enrol_get_users_courses").
 // params are additional query parameters.

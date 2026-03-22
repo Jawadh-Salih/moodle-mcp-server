@@ -310,6 +310,48 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 		},
 	)
 
+	// ── List Resources ────────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("list_resources",
+			mcp.WithDescription("List all downloadable files (PDFs, slides, videos) in a course with their module IDs and sizes."),
+			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
+			mcp.WithString("mime_type", mcp.Description("Filter by MIME type e.g. application/pdf (optional)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "course_id")
+			mimeType := mcp.ParseString(req, "mime_type", "")
+			result, err := tools.HandleListResources(ctx, client, tools.ListResourcesInput{
+				CourseID: id, MimeType: mimeType,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Download Resource ─────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("download_resource",
+			mcp.WithDescription("Download a file (PDF, slides, etc.) from Moodle and save it locally. Use list_resources to find module IDs."),
+			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
+			mcp.WithNumber("module_id", mcp.Required(), mcp.Description("The module ID of the resource (from list_resources)")),
+			mcp.WithString("save_dir", mcp.Description("Directory to save the file (default: ~/Downloads)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			courseID := intArg(req, "course_id")
+			moduleID := intArg(req, "module_id")
+			saveDir := mcp.ParseString(req, "save_dir", "")
+			result, err := tools.HandleDownloadResource(ctx, client, tools.DownloadResourceInput{
+				CourseID: courseID, ModuleID: moduleID, SaveDir: saveDir,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
 	// ── Get Journal Entry ─────────────────────────────────────────
 	s.AddTool(
 		mcp.NewTool("get_journal_entry",

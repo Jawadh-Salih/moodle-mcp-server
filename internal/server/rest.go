@@ -62,6 +62,10 @@ func (s *RESTServer) registerRoutes() {
 	s.mux.HandleFunc("/api/grades", s.handleGetGrades)
 	s.mux.HandleFunc("/api/grades/overview", s.handleGradesOverview)
 
+	// Resources
+	s.mux.HandleFunc("/api/resources", s.handleListResources)
+	s.mux.HandleFunc("/api/resources/download", s.handleDownloadResource)
+
 	// Assignments
 	s.mux.HandleFunc("/api/assignments", s.handleGetAssignments)
 	s.mux.HandleFunc("/api/assignments/upcoming", s.handleUpcomingAssignments)
@@ -208,6 +212,42 @@ func (s *RESTServer) handleGradesOverview(w http.ResponseWriter, r *http.Request
 
 	ctx := r.Context()
 	result, err := tools.HandleGetGradesOverview(ctx, s.client, tools.GetGradesOverviewInput{})
+	s.jsonResponse(w, result, err)
+}
+
+func (s *RESTServer) handleListResources(w http.ResponseWriter, r *http.Request) {
+	if !s.client.IsAuthenticated() {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	courseID := s.getIntQuery(r, "course_id")
+	if courseID == 0 {
+		http.Error(w, "Missing course_id parameter", http.StatusBadRequest)
+		return
+	}
+	mimeType := r.URL.Query().Get("mime_type")
+	ctx := r.Context()
+	result, err := tools.HandleListResources(ctx, s.client, tools.ListResourcesInput{
+		CourseID: courseID, MimeType: mimeType,
+	})
+	s.jsonResponse(w, result, err)
+}
+
+func (s *RESTServer) handleDownloadResource(w http.ResponseWriter, r *http.Request) {
+	if !s.client.IsAuthenticated() {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	courseID := s.getIntQuery(r, "course_id")
+	moduleID := s.getIntQuery(r, "module_id")
+	if courseID == 0 || moduleID == 0 {
+		http.Error(w, "Missing course_id or module_id parameter", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	result, err := tools.HandleDownloadResource(ctx, s.client, tools.DownloadResourceInput{
+		CourseID: courseID, ModuleID: moduleID,
+	})
 	s.jsonResponse(w, result, err)
 }
 
