@@ -19,14 +19,14 @@ type Config struct {
 // All fields are optional at load time — the login tool can provide them at runtime.
 func LoadFromEnv() *Config {
 	return &Config{
-		MoodleURL: NormalizeURL(os.Getenv("MOODLE_URL")),
+		MoodleURL: normalizeURL(os.Getenv("MOODLE_URL")),
 		Token:     os.Getenv("MOODLE_TOKEN"),
 		Username:  os.Getenv("MOODLE_USERNAME"),
 		Password:  os.Getenv("MOODLE_PASSWORD"),
 	}
 }
 
-// HasAuth returns true if the config has enough information to authenticate.
+// HasAuth returns true if the config has enough info to authenticate.
 func (c *Config) HasAuth() bool {
 	if c.MoodleURL == "" {
 		return false
@@ -34,11 +34,10 @@ func (c *Config) HasAuth() bool {
 	return c.Token != "" || (c.Username != "" && c.Password != "")
 }
 
-// Validate checks the config for structural correctness.
-// Returns an error if a URL is set but malformed or uses an unsupported scheme.
+// Validate checks that the config has a valid Moodle URL if one is set.
 func (c *Config) Validate() error {
 	if c.MoodleURL == "" {
-		return nil // URL can be provided later via the login tool
+		return nil // URL can be provided later via login tool
 	}
 	u, err := url.Parse(c.MoodleURL)
 	if err != nil {
@@ -48,14 +47,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("MOODLE_URL must use http or https scheme, got %q", u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("MOODLE_URL must include a host")
+		return fmt.Errorf("MOODLE_URL must have a host")
 	}
 	return nil
 }
 
-// NormalizeURL trims whitespace, strips a trailing slash, and prepends https://
-// if no scheme is present. Returns an empty string unchanged.
-func NormalizeURL(rawURL string) string {
+func normalizeURL(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return ""

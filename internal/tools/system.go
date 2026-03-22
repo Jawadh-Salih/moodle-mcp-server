@@ -2,18 +2,18 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/config"
+	"github.com/jawadh/moodle-mcp-server/internal/api"
 )
 
 // --- Login Tool ---
 
 type LoginInput struct {
-	MoodleURL string `json:"moodle_url"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
+	MoodleURL string `json:"moodle_url" jsonschema:"description=Your Moodle site URL (e.g. https://moodle.university.edu)"`
+	Username  string `json:"username" jsonschema:"description=Your Moodle username or email"`
+	Password  string `json:"password" jsonschema:"description=Your Moodle password"`
 }
 
 func HandleLogin(ctx context.Context, client *api.Client, input LoginInput) (string, error) {
@@ -21,18 +21,25 @@ func HandleLogin(ctx context.Context, client *api.Client, input LoginInput) (str
 		return "", fmt.Errorf("moodle_url, username, and password are all required")
 	}
 
-	baseURL := config.NormalizeURL(input.MoodleURL)
+	// Normalize URL
+	baseURL := input.MoodleURL
+	if baseURL[len(baseURL)-1] == '/' {
+		baseURL = baseURL[:len(baseURL)-1]
+	}
 
+	// Get token from credentials
 	token, err := api.GetTokenFromCredentials(ctx, baseURL, input.Username, input.Password)
 	if err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
 	}
 
+	// Set the session on the client
 	client.SetSession(baseURL, token)
 
+	// Fetch site info to get user ID and verify connection
 	info, err := getSiteInfoRaw(ctx, client)
 	if err != nil {
-		return "", fmt.Errorf("login succeeded but could not fetch site info: %w", err)
+		return "", fmt.Errorf("login succeeded but failed to get site info: %w", err)
 	}
 
 	client.SetUserID(info.UserID)
@@ -43,7 +50,6 @@ func HandleLogin(ctx context.Context, client *api.Client, input LoginInput) (str
 
 // --- Get Site Info Tool ---
 
-// SiteInfo mirrors the fields returned by core_webservice_get_site_info.
 type SiteInfo struct {
 	SiteName  string `json:"sitename"`
 	Username  string `json:"username"`
@@ -54,15 +60,14 @@ type SiteInfo struct {
 	UserEmail string `json:"useremail"`
 }
 
-// getSiteInfoRaw calls core_webservice_get_site_info and returns a typed result.
-// It is used internally by both HandleLogin and HandleGetSiteInfo.
 func getSiteInfoRaw(ctx context.Context, client *api.Client) (*SiteInfo, error) {
 	data, err := client.Call(ctx, "core_webservice_get_site_info", nil)
 	if err != nil {
 		return nil, err
 	}
+
 	var info SiteInfo
-	if err := unmarshal(data, &info); err != nil {
+	if err := json.Unmarshal(data, &info); err != nil {
 		return nil, fmt.Errorf("parsing site info: %w", err)
 	}
 	return &info, nil
@@ -74,16 +79,18 @@ func HandleGetSiteInfo(ctx context.Context, client *api.Client, _ GetSiteInfoInp
 	if !client.IsAuthenticated() {
 		return "", api.ErrNotAuthenticated
 	}
+
 	info, err := getSiteInfoRaw(ctx, client)
 	if err != nil {
 		return "", err
 	}
-	return marshalResult(info)
+
+	result, _ := json.MarshalIndent(info, "", "  ")
+	return string(result), nil
 }
 
 // --- Get User Profile Tool ---
 
-// UserProfile mirrors the fields returned by core_user_get_users_by_field.
 type UserProfile struct {
 	ID          int    `json:"id"`
 	Username    string `json:"username"`
@@ -107,6 +114,7 @@ func HandleGetUserProfile(ctx context.Context, client *api.Client, _ GetUserProf
 
 	userID := client.GetUserID()
 	if userID == 0 {
+		// Try to get it from site info
 		info, err := getSiteInfoRaw(ctx, client)
 		if err != nil {
 			return "", err
@@ -116,7 +124,7 @@ func HandleGetUserProfile(ctx context.Context, client *api.Client, _ GetUserProf
 	}
 
 	params := map[string]string{
-		"field":     "id",
+		"field": "id",
 		"values[0]": fmt.Sprintf("%d", userID),
 	}
 
@@ -126,12 +134,14 @@ func HandleGetUserProfile(ctx context.Context, client *api.Client, _ GetUserProf
 	}
 
 	var users []UserProfile
-	if err := unmarshal(data, &users); err != nil {
+	if err := json.Unmarshal(data, &users); err != nil {
 		return "", fmt.Errorf("parsing user profile: %w", err)
 	}
+
 	if len(users) == 0 {
 		return "", fmt.Errorf("user not found")
 	}
 
-	return marshalResult(users[0])
+	result, _ := json.MarshalIndent(users[0], "", "  ")
+	return string(result), nil
 }

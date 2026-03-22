@@ -3,23 +3,38 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/config"
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/tools"
+	"github.com/jawadh/moodle-mcp-server/internal/api"
+	"github.com/jawadh/moodle-mcp-server/internal/config"
+	"github.com/jawadh/moodle-mcp-server/internal/server"
+	"github.com/jawadh/moodle-mcp-server/internal/tools"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 func main() {
-	// Load config from environment (all optional — login tool can provide at runtime)
+	// Parse command line flags
+	mode := flag.String("mode", "mcp", "Server mode: 'mcp' for Claude, 'rest' for HTTP API, 'both' for both")
+	restPort := flag.Int("port", 8080, "REST API port (default: 8080)")
+	flag.Parse()
+
+	// Load config from environment
 	cfg := config.LoadFromEnv()
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Allow port override via env var
+	if envPort := os.Getenv("REST_API_PORT"); envPort != "" {
+		if p, err := strconv.Atoi(envPort); err == nil {
+			*restPort = p
+		}
 	}
 
 	// Create the Moodle API client
@@ -50,11 +65,28 @@ func main() {
 		}
 	}
 
+	// Run the appropriate server(s)
+	switch *mode {
+	case "mcp":
+		runMCPServer(client)
+	case "rest":
+		runRESTServer(client, *restPort)
+	case "both":
+		log.Println("Running both MCP and REST servers (experimental)")
+		go runRESTServer(client, *restPort)
+		runMCPServer(client)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown mode: %s\n", *mode)
+		os.Exit(1)
+	}
+}
+
+func runMCPServer(client *api.Client) {
 	// Create MCP server
-	s := server.NewMCPServer(
+	s := mcpserver.NewMCPServer(
 		"moodle-mcp-server",
 		"1.0.0",
-		server.WithToolCapabilities(true),
+		mcpserver.WithToolCapabilities(true),
 	)
 
 	// Register all tools
@@ -62,13 +94,23 @@ func main() {
 
 	// Run the server over stdio
 	log.Println("Moodle MCP Server starting...")
-	if err := server.ServeStdio(s); err != nil {
+	if err := mcpserver.ServeStdio(s); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func registerTools(s *server.MCPServer, client *api.Client) {
+func runRESTServer(client *api.Client, port int) {
+	restSrv := server.NewRESTServer(client, port)
+	log.Printf("Starting REST API on port %d", port)
+	log.Printf("OpenAPI docs at http://localhost:%d/api/docs", port)
+	if err := restSrv.Run(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "REST server error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 
 	// ── Login ──────────────────────────────────────────────────────
 	s.AddTool(
@@ -79,9 +121,9 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithString("password", mcp.Required(), mcp.Description("Your Moodle password")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			url := mcp.ParseString(req, "moodle_url", "")
-			user := mcp.ParseString(req, "username", "")
-			pass := mcp.ParseString(req, "password", "")
+			url, _ := req.RequireString("moodle_url")
+			user, _ := req.RequireString("username")
+			pass, _ := req.RequireString("password")
 			result, err := tools.HandleLogin(ctx, client, tools.LoginInput{
 				MoodleURL: url, Username: user, Password: pass,
 			})
@@ -141,7 +183,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID (get it from list_courses)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			id := mcp.ParseInt(req, "course_id", 0)
+			id := intArg(req, "course_id")
 			result, err := tools.HandleGetCourseContents(ctx, client, tools.GetCourseContentsInput{CourseID: id})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -157,7 +199,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			id := mcp.ParseInt(req, "course_id", 0)
+			id := intArg(req, "course_id")
 			result, err := tools.HandleGetCourseDetails(ctx, client, tools.GetCourseDetailsInput{CourseID: id})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -173,7 +215,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID to get grades for")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			id := mcp.ParseInt(req, "course_id", 0)
+			id := intArg(req, "course_id")
 			result, err := tools.HandleGetGrades(ctx, client, tools.GetGradesInput{CourseID: id})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -203,7 +245,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			id := mcp.ParseInt(req, "course_id", 0)
+			id := intArg(req, "course_id")
 			result, err := tools.HandleGetAssignments(ctx, client, tools.GetAssignmentsInput{CourseID: id})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -219,7 +261,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("days_ahead", mcp.Description("Number of days to look ahead (default: 30)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			days := mcp.ParseInt(req, "days_ahead", 0)
+			days := intArg(req, "days_ahead")
 			result, err := tools.HandleGetUpcomingAssignments(ctx, client, tools.GetUpcomingAssignmentsInput{DaysAhead: days})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -236,8 +278,8 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithString("text", mcp.Required(), mcp.Description("The text content to submit")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			id := mcp.ParseInt(req, "assignment_id", 0)
-			text := mcp.ParseString(req, "text", "")
+			id := intArg(req, "assignment_id")
+			text, _ := req.RequireString("text")
 			result, err := tools.HandleSubmitAssignment(ctx, client, tools.SubmitAssignmentInput{
 				AssignmentID: id, Text: text,
 			})
@@ -255,7 +297,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("days_ahead", mcp.Description("Number of days to look ahead (default: 30)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			days := mcp.ParseInt(req, "days_ahead", 0)
+			days := intArg(req, "days_ahead")
 			result, err := tools.HandleGetCalendarEvents(ctx, client, tools.GetCalendarEventsInput{DaysAhead: days})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -271,7 +313,7 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithNumber("days_ahead", mcp.Description("Number of days to look ahead (default: 14)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			days := mcp.ParseInt(req, "days_ahead", 0)
+			days := intArg(req, "days_ahead")
 			result, err := tools.HandleGetUpcomingDeadlines(ctx, client, tools.GetUpcomingDeadlinesInput{DaysAhead: days})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -288,8 +330,13 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			mcp.WithBoolean("unread_only", mcp.Description("Only show unread notifications (default: true)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			limit := mcp.ParseInt(req, "limit", 0)
-			unreadOnly := mcp.ParseBoolean(req, "unread_only", true)
+			limit := intArg(req, "limit")
+			unreadOnly := true
+			if v, ok := req.Params.Arguments["unread_only"]; ok {
+				if b, ok := v.(bool); ok {
+					unreadOnly = b
+				}
+			}
 			result, err := tools.HandleGetNotifications(ctx, client, tools.GetNotificationsInput{
 				Limit: limit, UnreadOnly: unreadOnly,
 			})
@@ -299,4 +346,21 @@ func registerTools(s *server.MCPServer, client *api.Client) {
 			return mcp.NewToolResultText(result), nil
 		},
 	)
+}
+
+// intArg extracts an integer from request arguments (JSON numbers are float64).
+func intArg(req mcp.CallToolRequest, key string) int {
+	if v, ok := req.Params.Arguments[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return int(n)
+		case int:
+			return n
+		case json.Number:
+			if i, err := n.Int64(); err == nil {
+				return int(i)
+			}
+		}
+	}
+	return 0
 }

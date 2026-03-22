@@ -2,14 +2,14 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
+	"github.com/jawadh/moodle-mcp-server/internal/api"
 )
 
 // --- Get Grades Tool ---
 
-// GradeItem mirrors a single grade entry from gradereport_user_get_grade_items.
 type GradeItem struct {
 	ID             int     `json:"id"`
 	ItemName       string  `json:"itemname"`
@@ -22,49 +22,52 @@ type GradeItem struct {
 	Percentage     string  `json:"percentageformatted,omitempty"`
 }
 
-type userGrade struct {
+type UserGrade struct {
 	CourseID   int         `json:"courseid"`
 	UserID     int         `json:"userid"`
 	FullName   string      `json:"userfullname"`
 	GradeItems []GradeItem `json:"gradeitems"`
 }
 
-type gradeReport struct {
-	UserGrades []userGrade `json:"usergrades"`
+type GradeReport struct {
+	UserGrades []UserGrade `json:"usergrades"`
 }
 
 type GetGradesInput struct {
-	CourseID int `json:"course_id"`
+	CourseID int `json:"course_id" jsonschema:"description=The Moodle course ID to get grades for"`
 }
 
 func HandleGetGrades(ctx context.Context, client *api.Client, input GetGradesInput) (string, error) {
 	if !client.IsAuthenticated() {
 		return "", api.ErrNotAuthenticated
 	}
+
 	if input.CourseID == 0 {
 		return "", fmt.Errorf("course_id is required")
 	}
 
 	userID := client.GetUserID()
-	data, err := client.Call(ctx, "gradereport_user_get_grade_items", map[string]string{
+	params := map[string]string{
 		"courseid": fmt.Sprintf("%d", input.CourseID),
 		"userid":   fmt.Sprintf("%d", userID),
-	})
+	}
+
+	data, err := client.Call(ctx, "gradereport_user_get_grade_items", params)
 	if err != nil {
 		return "", err
 	}
 
-	var report gradeReport
-	if err := unmarshal(data, &report); err != nil {
+	var report GradeReport
+	if err := json.Unmarshal(data, &report); err != nil {
 		return "", fmt.Errorf("parsing grades: %w", err)
 	}
 
-	return marshalResult(report)
+	result, _ := json.MarshalIndent(report, "", "  ")
+	return string(result), nil
 }
 
 // --- Get Grades Overview Tool ---
 
-// CourseGradeSummary is a condensed grade summary for a single course.
 type CourseGradeSummary struct {
 	CourseID   int    `json:"course_id"`
 	CourseName string `json:"course_name"`
@@ -80,30 +83,36 @@ func HandleGetGradesOverview(ctx context.Context, client *api.Client, _ GetGrade
 		return "", api.ErrNotAuthenticated
 	}
 
-	// getEnrolledCourses returns names alongside IDs, eliminating N+1 lookups.
-	courses, err := getEnrolledCourses(ctx, client)
+	courseIDs, err := getEnrolledCourseIDs(ctx, client)
 	if err != nil {
 		return "", fmt.Errorf("getting enrolled courses: %w", err)
 	}
 
 	userID := client.GetUserID()
-	summaries := make([]CourseGradeSummary, 0, len(courses))
+	var summaries []CourseGradeSummary
 
-	for _, course := range courses {
-		data, err := client.Call(ctx, "gradereport_user_get_grade_items", map[string]string{
-			"courseid": fmt.Sprintf("%d", course.ID),
+	for _, cid := range courseIDs {
+		params := map[string]string{
+			"courseid": fmt.Sprintf("%d", cid),
 			"userid":   fmt.Sprintf("%d", userID),
-		})
+		}
+
+		data, err := client.Call(ctx, "gradereport_user_get_grade_items", params)
 		if err != nil {
+			continue // Skip courses where we can't access grades
+		}
+
+		var report GradeReport
+		if err := json.Unmarshal(data, &report); err != nil {
 			continue
 		}
 
-		var report gradeReport
-		if err := unmarshal(data, &report); err != nil || len(report.UserGrades) == 0 {
+		if len(report.UserGrades) == 0 {
 			continue
 		}
 
 		ug := report.UserGrades[0]
+		// Find the course total grade item
 		var totalGrade, gradeMax string
 		gradedCount := 0
 		for _, item := range ug.GradeItems {
@@ -116,17 +125,32 @@ func HandleGetGradesOverview(ctx context.Context, client *api.Client, _ GetGrade
 			}
 		}
 
+		// Get course name
+		courseName := fmt.Sprintf("Course %d", cid)
+		cParams := map[string]string{
+			"options[ids][0]": fmt.Sprintf("%d", cid),
+		}
+		if cData, err := client.Call(ctx, "core_course_get_courses", cParams); err == nil {
+			var courses []struct {
+				FullName string `json:"fullname"`
+			}
+			if json.Unmarshal(cData, &courses) == nil && len(courses) > 0 {
+				courseName = courses[0].FullName
+			}
+		}
+
 		summaries = append(summaries, CourseGradeSummary{
-			CourseID:   course.ID,
-			CourseName: course.Name,
+			CourseID:   cid,
+			CourseName: courseName,
 			TotalGrade: totalGrade,
 			GradeMax:   gradeMax,
 			ItemCount:  gradedCount,
 		})
 	}
 
-	return marshalResult(map[string]any{
+	result, _ := json.MarshalIndent(map[string]interface{}{
 		"total_courses": len(summaries),
 		"grades":        summaries,
-	})
+	}, "", "  ")
+	return string(result), nil
 }

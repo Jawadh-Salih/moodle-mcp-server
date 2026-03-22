@@ -2,15 +2,18 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
+	"github.com/jawadh/moodle-mcp-server/internal/api"
 )
 
-// message mirrors the API response shape from core_message_get_messages.
-type message struct {
+// --- Get Notifications Tool ---
+
+type Message struct {
 	ID               int    `json:"id"`
+	UserIDFrom       int    `json:"useridfrom"`
 	UserFromFullName string `json:"userfromfullname"`
 	Subject          string `json:"subject"`
 	Text             string `json:"text"`
@@ -19,25 +22,22 @@ type message struct {
 	TimeRead         int64  `json:"timeread"`
 }
 
-// messageDisplay is the public-facing shape for a notification.
-type messageDisplay struct {
-	ID      int    `json:"id"`
-	From    string `json:"from"`
-	Subject string `json:"subject"`
-	Preview string `json:"preview"`
-	Date    string `json:"date"`
-	Read    bool   `json:"read"`
+type MessageDisplay struct {
+	ID        int    `json:"id"`
+	From      string `json:"from"`
+	Subject   string `json:"subject"`
+	Preview   string `json:"preview"`
+	Date      string `json:"date"`
+	Read      bool   `json:"read"`
 }
 
-type messagesResponse struct {
-	Messages []message `json:"messages"`
+type MessagesResponse struct {
+	Messages []Message `json:"messages"`
 }
-
-// --- Get Notifications Tool ---
 
 type GetNotificationsInput struct {
-	Limit      int  `json:"limit,omitempty"`
-	UnreadOnly bool `json:"unread_only,omitempty"`
+	Limit    int  `json:"limit,omitempty" jsonschema:"description=Maximum number of notifications to return (default: 20)"`
+	UnreadOnly bool `json:"unread_only,omitempty" jsonschema:"description=Only show unread notifications (default: true)"`
 }
 
 func HandleGetNotifications(ctx context.Context, client *api.Client, input GetNotificationsInput) (string, error) {
@@ -50,28 +50,30 @@ func HandleGetNotifications(ctx context.Context, client *api.Client, input GetNo
 		limit = 20
 	}
 
+	userID := client.GetUserID()
 	readType := "unread"
 	if !input.UnreadOnly {
 		readType = "both"
 	}
 
-	userID := client.GetUserID()
-	data, err := client.Call(ctx, "core_message_get_messages", map[string]string{
-		"useridto":    fmt.Sprintf("%d", userID),
-		"type":        readType,
-		"limitnum":    fmt.Sprintf("%d", limit),
-		"newestfirst": "1",
-	})
+	params := map[string]string{
+		"useridto":     fmt.Sprintf("%d", userID),
+		"type":         readType,
+		"limitnum":     fmt.Sprintf("%d", limit),
+		"newestfirst":  "1",
+	}
+
+	data, err := client.Call(ctx, "core_message_get_messages", params)
 	if err != nil {
 		return "", err
 	}
 
-	var resp messagesResponse
-	if err := unmarshal(data, &resp); err != nil {
+	var resp MessagesResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return "", fmt.Errorf("parsing messages: %w", err)
 	}
 
-	display := make([]messageDisplay, 0, len(resp.Messages))
+	var display []MessageDisplay
 	for _, m := range resp.Messages {
 		preview := m.Text
 		if preview == "" {
@@ -79,7 +81,7 @@ func HandleGetNotifications(ctx context.Context, client *api.Client, input GetNo
 		}
 		preview = truncate(stripHTML(preview), 150)
 
-		display = append(display, messageDisplay{
+		display = append(display, MessageDisplay{
 			ID:      m.ID,
 			From:    m.UserFromFullName,
 			Subject: m.Subject,
@@ -89,8 +91,29 @@ func HandleGetNotifications(ctx context.Context, client *api.Client, input GetNo
 		})
 	}
 
-	return marshalResult(map[string]any{
+	result, _ := json.MarshalIndent(map[string]interface{}{
 		"total_messages": len(display),
 		"messages":       display,
-	})
+	}, "", "  ")
+	return string(result), nil
+}
+
+// stripHTML removes HTML tags from a string (simple implementation).
+func stripHTML(s string) string {
+	var result []byte
+	inTag := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == '<' {
+			inTag = true
+			continue
+		}
+		if s[i] == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			result = append(result, s[i])
+		}
+	}
+	return string(result)
 }

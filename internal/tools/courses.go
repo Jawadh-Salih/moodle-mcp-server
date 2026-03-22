@@ -2,71 +2,27 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
+	"github.com/jawadh/moodle-mcp-server/internal/api"
 )
-
-// CourseRef is a lightweight course identifier used to avoid N+1 API lookups.
-// It is populated once from core_enrol_get_users_courses and reused across tools.
-type CourseRef struct {
-	ID   int
-	Name string
-}
-
-// course is the raw API shape returned by core_enrol_get_users_courses.
-type course struct {
-	ID        int      `json:"id"`
-	ShortName string   `json:"shortname"`
-	FullName  string   `json:"fullname"`
-	StartDate int64    `json:"startdate"`
-	EndDate   int64    `json:"enddate"`
-	Progress  *float64 `json:"progress,omitempty"` // float64: Moodle may return e.g. 3.2
-}
-
-// getEnrolledCourses fetches all courses the user is enrolled in.
-// It is the single source of truth for course enumeration across all tools.
-func getEnrolledCourses(ctx context.Context, client *api.Client) ([]CourseRef, error) {
-	userID := client.GetUserID()
-	if userID == 0 {
-		return nil, fmt.Errorf("user ID not set — please run get_site_info first")
-	}
-	params := map[string]string{
-		"userid": fmt.Sprintf("%d", userID),
-	}
-	data, err := client.Call(ctx, "core_enrol_get_users_courses", params)
-	if err != nil {
-		return nil, err
-	}
-	var courses []course
-	if err := unmarshal(data, &courses); err != nil {
-		return nil, fmt.Errorf("parsing courses: %w", err)
-	}
-	refs := make([]CourseRef, len(courses))
-	for i, c := range courses {
-		refs[i] = CourseRef{ID: c.ID, Name: c.FullName}
-	}
-	return refs, nil
-}
-
-// getEnrolledCourseIDs returns only the IDs of enrolled courses.
-func getEnrolledCourseIDs(ctx context.Context, client *api.Client) ([]int, error) {
-	courses, err := getEnrolledCourses(ctx, client)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]int, len(courses))
-	for i, c := range courses {
-		ids[i] = c.ID
-	}
-	return ids, nil
-}
 
 // --- List Courses Tool ---
 
-// courseDisplay is the public-facing shape for a listed course.
-type courseDisplay struct {
+type Course struct {
+	ID        int    `json:"id"`
+	ShortName string `json:"shortname"`
+	FullName  string `json:"fullname"`
+	Summary   string `json:"summary"`
+	StartDate int64  `json:"startdate"`
+	EndDate   int64  `json:"enddate"`
+	Visible   int    `json:"visible"`
+	Progress  *int   `json:"progress,omitempty"`
+}
+
+type CourseDisplay struct {
 	ID        int    `json:"id"`
 	ShortName string `json:"shortname"`
 	FullName  string `json:"fullname"`
@@ -90,20 +46,21 @@ func HandleListCourses(ctx context.Context, client *api.Client, _ ListCoursesInp
 	params := map[string]string{
 		"userid": fmt.Sprintf("%d", userID),
 	}
+
 	data, err := client.Call(ctx, "core_enrol_get_users_courses", params)
 	if err != nil {
 		return "", err
 	}
 
-	var courses []course
-	if err := unmarshal(data, &courses); err != nil {
+	var courses []Course
+	if err := json.Unmarshal(data, &courses); err != nil {
 		return "", fmt.Errorf("parsing courses: %w", err)
 	}
 
 	now := time.Now().Unix()
-	display := make([]courseDisplay, 0, len(courses))
+	var display []CourseDisplay
 	for _, c := range courses {
-		d := courseDisplay{
+		d := CourseDisplay{
 			ID:        c.ID,
 			ShortName: c.ShortName,
 			FullName:  c.FullName,
@@ -118,125 +75,141 @@ func HandleListCourses(ctx context.Context, client *api.Client, _ ListCoursesInp
 		display = append(display, d)
 	}
 
-	return marshalResult(map[string]any{
+	result, _ := json.MarshalIndent(map[string]interface{}{
 		"total_courses": len(display),
 		"courses":       display,
-	})
+	}, "", "  ")
+	return string(result), nil
+}
+
+// Helper to get enrolled course IDs
+func getEnrolledCourseIDs(ctx context.Context, client *api.Client) ([]int, error) {
+	userID := client.GetUserID()
+	params := map[string]string{
+		"userid": fmt.Sprintf("%d", userID),
+	}
+
+	data, err := client.Call(ctx, "core_enrol_get_users_courses", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var courses []Course
+	if err := json.Unmarshal(data, &courses); err != nil {
+		return nil, err
+	}
+
+	ids := make([]int, len(courses))
+	for i, c := range courses {
+		ids[i] = c.ID
+	}
+	return ids, nil
 }
 
 // --- Get Course Contents Tool ---
 
-// courseSection mirrors the core_course_get_contents API response.
-type courseSection struct {
+type CourseSection struct {
 	ID      int            `json:"id"`
 	Name    string         `json:"name"`
 	Summary string         `json:"summary"`
 	Visible int            `json:"visible"`
-	Modules []courseModule `json:"modules"`
+	Modules []CourseModule `json:"modules"`
 }
 
-type courseModule struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	ModName string `json:"modname"`
-	URL     string `json:"url,omitempty"`
-	Visible int    `json:"visible"`
+type CourseModule struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	ModName     string `json:"modname"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Visible     int    `json:"visible"`
 }
 
 type GetCourseContentsInput struct {
-	CourseID int `json:"course_id"`
+	CourseID int `json:"course_id" jsonschema:"description=The Moodle course ID (get it from list_courses)"`
 }
 
 func HandleGetCourseContents(ctx context.Context, client *api.Client, input GetCourseContentsInput) (string, error) {
 	if !client.IsAuthenticated() {
 		return "", api.ErrNotAuthenticated
 	}
+
 	if input.CourseID == 0 {
 		return "", fmt.Errorf("course_id is required")
 	}
 
-	data, err := client.Call(ctx, "core_course_get_contents", map[string]string{
+	params := map[string]string{
 		"courseid": fmt.Sprintf("%d", input.CourseID),
-	})
+	}
+
+	data, err := client.Call(ctx, "core_course_get_contents", params)
 	if err != nil {
 		return "", err
 	}
 
-	var sections []courseSection
-	if err := unmarshal(data, &sections); err != nil {
+	var sections []CourseSection
+	if err := json.Unmarshal(data, &sections); err != nil {
 		return "", fmt.Errorf("parsing course contents: %w", err)
 	}
 
-	return marshalResult(map[string]any{
+	result, _ := json.MarshalIndent(map[string]interface{}{
 		"course_id":      input.CourseID,
 		"total_sections": len(sections),
 		"sections":       sections,
-	})
+	}, "", "  ")
+	return string(result), nil
 }
 
 // --- Get Course Details Tool ---
 
-// courseDetails is the public-facing shape for a single course.
-type courseDetails struct {
-	ID        int    `json:"id"`
-	ShortName string `json:"shortname"`
-	FullName  string `json:"fullname"`
-	StartDate string `json:"start_date"`
-	EndDate   string `json:"end_date,omitempty"`
-	Active    bool   `json:"active"`
+type CourseDetails struct {
+	ID           int    `json:"id"`
+	ShortName    string `json:"shortname"`
+	FullName     string `json:"fullname"`
+	Summary      string `json:"summary"`
+	CategoryID   int    `json:"categoryid"`
+	Format       string `json:"format"`
+	StartDate    string `json:"start_date"`
+	EndDate      string `json:"end_date,omitempty"`
+	NumSections  int    `json:"numsections"`
+	EnrolledUser int    `json:"enrolledusercount,omitempty"`
 }
 
 type GetCourseDetailsInput struct {
-	CourseID int `json:"course_id"`
+	CourseID int `json:"course_id" jsonschema:"description=The Moodle course ID"`
 }
 
-// HandleGetCourseDetails returns details for a specific enrolled course.
-// It uses core_enrol_get_users_courses (student-accessible) rather than
-// core_course_get_courses which requires admin-level permissions.
 func HandleGetCourseDetails(ctx context.Context, client *api.Client, input GetCourseDetailsInput) (string, error) {
 	if !client.IsAuthenticated() {
 		return "", api.ErrNotAuthenticated
 	}
+
 	if input.CourseID == 0 {
 		return "", fmt.Errorf("course_id is required")
 	}
 
-	userID := client.GetUserID()
-	if userID == 0 {
-		return "", fmt.Errorf("user ID not set — please run get_site_info first")
+	params := map[string]string{
+		"options[ids][0]": fmt.Sprintf("%d", input.CourseID),
 	}
 
-	data, err := client.Call(ctx, "core_enrol_get_users_courses", map[string]string{
-		"userid": fmt.Sprintf("%d", userID),
-	})
+	data, err := client.Call(ctx, "core_course_get_courses", params)
 	if err != nil {
 		return "", err
 	}
 
-	var courses []course
-	if err := unmarshal(data, &courses); err != nil {
-		return "", fmt.Errorf("parsing courses: %w", err)
+	var courses []json.RawMessage
+	if err := json.Unmarshal(data, &courses); err != nil {
+		return "", fmt.Errorf("parsing course details: %w", err)
 	}
 
-	now := time.Now().Unix()
-	for _, c := range courses {
-		if c.ID != input.CourseID {
-			continue
-		}
-		d := courseDetails{
-			ID:        c.ID,
-			ShortName: c.ShortName,
-			FullName:  c.FullName,
-			Active:    c.StartDate <= now && (c.EndDate == 0 || c.EndDate >= now),
-		}
-		if c.StartDate > 0 {
-			d.StartDate = time.Unix(c.StartDate, 0).Format("2006-01-02")
-		}
-		if c.EndDate > 0 {
-			d.EndDate = time.Unix(c.EndDate, 0).Format("2006-01-02")
-		}
-		return marshalResult(d)
+	if len(courses) == 0 {
+		return "", fmt.Errorf("course with ID %d not found", input.CourseID)
 	}
 
-	return "", fmt.Errorf("course %d not found in your enrolled courses", input.CourseID)
+	// Re-parse the first course with our display struct
+	var raw map[string]interface{}
+	json.Unmarshal(courses[0], &raw)
+
+	result, _ := json.MarshalIndent(raw, "", "  ")
+	return string(result), nil
 }

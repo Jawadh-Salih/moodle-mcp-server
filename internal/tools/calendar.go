@@ -2,42 +2,43 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
-	"github.com/Jawadh-Salih/moodle-mcp-server/internal/api"
+	"github.com/jawadh/moodle-mcp-server/internal/api"
 )
 
-// calendarEvent mirrors the API response shape from core_calendar_get_calendar_events.
-type calendarEvent struct {
+// --- Get Calendar Events Tool ---
+
+type CalendarEvent struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
+	Description string `json:"description"`
 	CourseID    int    `json:"courseid"`
 	ModuleName  string `json:"modulename"`
 	EventType   string `json:"eventtype"`
 	TimeStart   int64  `json:"timestart"`
+	Duration    int    `json:"timeduration"`
 }
 
-// calendarEventDisplay is the public-facing shape for a calendar event.
-type calendarEventDisplay struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Course string `json:"course,omitempty"`
-	Date   string `json:"date"`
-	Time   string `json:"time"`
-	Module string `json:"module,omitempty"`
+type CalendarEventDisplay struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Course     string `json:"course,omitempty"`
+	Date       string `json:"date"`
+	Time       string `json:"time"`
+	Module     string `json:"module,omitempty"`
 }
 
-type calendarResponse struct {
-	Events []calendarEvent `json:"events"`
+type CalendarResponse struct {
+	Events []CalendarEvent `json:"events"`
 }
-
-// --- Get Calendar Events Tool ---
 
 type GetCalendarEventsInput struct {
-	DaysAhead int `json:"days_ahead,omitempty"`
+	DaysAhead int `json:"days_ahead,omitempty" jsonschema:"description=Number of days to look ahead (default: 30)"`
 }
 
 func HandleGetCalendarEvents(ctx context.Context, client *api.Client, input GetCalendarEventsInput) (string, error) {
@@ -50,15 +51,9 @@ func HandleGetCalendarEvents(ctx context.Context, client *api.Client, input GetC
 		daysAhead = 30
 	}
 
-	// Fetch courses once — provides both IDs and names without extra API calls.
-	courses, err := getEnrolledCourses(ctx, client)
+	courseIDs, err := getEnrolledCourseIDs(ctx, client)
 	if err != nil {
 		return "", err
-	}
-
-	courseNames := make(map[int]string, len(courses))
-	for _, c := range courses {
-		courseNames[c.ID] = c.Name
 	}
 
 	now := time.Now()
@@ -66,8 +61,10 @@ func HandleGetCalendarEvents(ctx context.Context, client *api.Client, input GetC
 		"options[timestart]": fmt.Sprintf("%d", now.Unix()),
 		"options[timeend]":   fmt.Sprintf("%d", now.Add(time.Duration(daysAhead)*24*time.Hour).Unix()),
 	}
-	for i, c := range courses {
-		params[fmt.Sprintf("events[courseids][%d]", i)] = fmt.Sprintf("%d", c.ID)
+
+	// Add course IDs
+	for i, cid := range courseIDs {
+		params[fmt.Sprintf("events[courseids][%d]", i)] = fmt.Sprintf("%d", cid)
 	}
 
 	data, err := client.Call(ctx, "core_calendar_get_calendar_events", params)
@@ -75,43 +72,42 @@ func HandleGetCalendarEvents(ctx context.Context, client *api.Client, input GetC
 		return "", err
 	}
 
-	var resp calendarResponse
-	if err := unmarshal(data, &resp); err != nil {
+	var resp CalendarResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return "", fmt.Errorf("parsing calendar events: %w", err)
 	}
 
-	display := make([]calendarEventDisplay, 0, len(resp.Events))
+	var display []CalendarEventDisplay
 	for _, e := range resp.Events {
 		t := time.Unix(e.TimeStart, 0)
-		display = append(display, calendarEventDisplay{
+		display = append(display, CalendarEventDisplay{
 			ID:     e.ID,
 			Name:   e.Name,
 			Type:   e.EventType,
-			Course: courseNames[e.CourseID],
 			Date:   t.Format("2006-01-02"),
 			Time:   t.Format("15:04"),
 			Module: e.ModuleName,
 		})
 	}
 
+	// Sort by date
 	sort.Slice(display, func(i, j int) bool {
 		return display[i].Date < display[j].Date
 	})
 
-	return marshalResult(map[string]any{
+	result, _ := json.MarshalIndent(map[string]interface{}{
 		"days_ahead":   daysAhead,
 		"total_events": len(display),
 		"events":       display,
-	})
+	}, "", "  ")
+	return string(result), nil
 }
 
 // --- Get Upcoming Deadlines Tool ---
 
-// deadline represents a single upcoming deadline from any source.
-type deadline struct {
+type Deadline struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
-	CourseID   int    `json:"course_id"`
 	CourseName string `json:"course"`
 	DueDate    string `json:"due_date"`
 	DueTime    string `json:"due_time"`
@@ -120,7 +116,7 @@ type deadline struct {
 }
 
 type GetUpcomingDeadlinesInput struct {
-	DaysAhead int `json:"days_ahead,omitempty"`
+	DaysAhead int `json:"days_ahead,omitempty" jsonschema:"description=Number of days to look ahead (default: 14)"`
 }
 
 func HandleGetUpcomingDeadlines(ctx context.Context, client *api.Client, input GetUpcomingDeadlinesInput) (string, error) {
@@ -133,32 +129,44 @@ func HandleGetUpcomingDeadlines(ctx context.Context, client *api.Client, input G
 		daysAhead = 14
 	}
 
-	// getEnrolledCourses returns names, eliminating N+1 lookups for course names.
-	courses, err := getEnrolledCourses(ctx, client)
+	courseIDs, err := getEnrolledCourseIDs(ctx, client)
 	if err != nil {
 		return "", err
 	}
 
-	courseNames := make(map[int]string, len(courses))
-	for _, c := range courses {
-		courseNames[c.ID] = c.Name
-	}
-
 	now := time.Now()
 	cutoff := now.Add(time.Duration(daysAhead) * 24 * time.Hour)
-	var deadlines []deadline
 
-	// Collect assignment deadlines.
-	for _, c := range courses {
-		data, err := client.Call(ctx, "mod_assign_get_assignments", map[string]string{
-			"courseids[0]": fmt.Sprintf("%d", c.ID),
-		})
+	// Build a course ID → name map
+	courseNames := make(map[int]string)
+	for _, cid := range courseIDs {
+		cParams := map[string]string{
+			"options[ids][0]": fmt.Sprintf("%d", cid),
+		}
+		if cData, err := client.Call(ctx, "core_course_get_courses", cParams); err == nil {
+			var courses []struct {
+				FullName string `json:"fullname"`
+			}
+			if json.Unmarshal(cData, &courses) == nil && len(courses) > 0 {
+				courseNames[cid] = courses[0].FullName
+			}
+		}
+	}
+
+	var deadlines []Deadline
+
+	// Get assignment deadlines
+	for _, cid := range courseIDs {
+		params := map[string]string{
+			"courseids[0]": fmt.Sprintf("%d", cid),
+		}
+		data, err := client.Call(ctx, "mod_assign_get_assignments", params)
 		if err != nil {
 			continue
 		}
 
-		var resp assignmentResponse
-		if err := unmarshal(data, &resp); err != nil {
+		var resp AssignmentResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
 			continue
 		}
 
@@ -170,11 +178,10 @@ func HandleGetUpcomingDeadlines(ctx context.Context, client *api.Client, input G
 				due := time.Unix(a.DueDate, 0)
 				if due.After(now) && due.Before(cutoff) {
 					daysLeft := int(time.Until(due).Hours() / 24)
-					deadlines = append(deadlines, deadline{
+					deadlines = append(deadlines, Deadline{
 						Name:       a.Name,
 						Type:       "assignment",
-						CourseID:   c.ID,
-						CourseName: c.Name,
+						CourseName: courseNames[cid],
 						DueDate:    due.Format("2006-01-02"),
 						DueTime:    due.Format("15:04"),
 						DaysLeft:   daysLeft,
@@ -185,25 +192,24 @@ func HandleGetUpcomingDeadlines(ctx context.Context, client *api.Client, input G
 		}
 	}
 
-	// Collect calendar event deadlines.
+	// Get calendar event deadlines
 	calParams := map[string]string{
 		"options[timestart]": fmt.Sprintf("%d", now.Unix()),
 		"options[timeend]":   fmt.Sprintf("%d", cutoff.Unix()),
 	}
-	for i, c := range courses {
-		calParams[fmt.Sprintf("events[courseids][%d]", i)] = fmt.Sprintf("%d", c.ID)
+	for i, cid := range courseIDs {
+		calParams[fmt.Sprintf("events[courseids][%d]", i)] = fmt.Sprintf("%d", cid)
 	}
 	if calData, err := client.Call(ctx, "core_calendar_get_calendar_events", calParams); err == nil {
-		var calResp calendarResponse
-		if unmarshal(calData, &calResp) == nil {
+		var calResp CalendarResponse
+		if json.Unmarshal(calData, &calResp) == nil {
 			for _, e := range calResp.Events {
 				if e.EventType == "due" || e.EventType == "close" {
 					due := time.Unix(e.TimeStart, 0)
 					daysLeft := int(time.Until(due).Hours() / 24)
-					deadlines = append(deadlines, deadline{
+					deadlines = append(deadlines, Deadline{
 						Name:       e.Name,
 						Type:       e.EventType,
-						CourseID:   e.CourseID,
 						CourseName: courseNames[e.CourseID],
 						DueDate:    due.Format("2006-01-02"),
 						DueTime:    due.Format("15:04"),
@@ -215,26 +221,26 @@ func HandleGetUpcomingDeadlines(ctx context.Context, client *api.Client, input G
 		}
 	}
 
-	// Sort by urgency (fewest days left first).
+	// Sort by due date (most urgent first)
 	sort.Slice(deadlines, func(i, j int) bool {
 		return deadlines[i].DaysLeft < deadlines[j].DaysLeft
 	})
 
-	// Deduplicate: key includes course ID to avoid dropping same-named assignments
-	// from different courses that happen to share a due date.
-	seen := make(map[string]bool, len(deadlines))
-	unique := make([]deadline, 0, len(deadlines))
+	// Deduplicate by name+date
+	seen := make(map[string]bool)
+	var unique []Deadline
 	for _, d := range deadlines {
-		key := fmt.Sprintf("%d|%s|%s", d.CourseID, d.Name, d.DueDate)
+		key := d.Name + d.DueDate
 		if !seen[key] {
 			seen[key] = true
 			unique = append(unique, d)
 		}
 	}
 
-	return marshalResult(map[string]any{
+	result, _ := json.MarshalIndent(map[string]interface{}{
 		"days_ahead":      daysAhead,
 		"total_deadlines": len(unique),
 		"deadlines":       unique,
-	})
+	}, "", "  ")
+	return string(result), nil
 }

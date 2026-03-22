@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-// maxResponseBytes caps API response body reads at 10 MB to prevent memory exhaustion.
-const maxResponseBytes = 10 * 1024 * 1024
-
-// Client is the Moodle REST API client. It is safe for concurrent use.
+// Client is the Moodle REST API client.
 type Client struct {
 	mu      sync.RWMutex
 	baseURL string
@@ -52,7 +49,7 @@ func (c *Client) GetUserID() int {
 	return c.userID
 }
 
-// IsAuthenticated returns true if the client has an active session.
+// IsAuthenticated returns true if the client has a valid session.
 func (c *Client) IsAuthenticated() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -68,7 +65,7 @@ func (c *Client) GetBaseURL() string {
 
 // Call makes a request to the Moodle REST API.
 // function is the wsfunction name (e.g. "core_enrol_get_users_courses").
-// params are additional query parameters beyond the standard auth/format params.
+// params are additional query parameters.
 func (c *Client) Call(ctx context.Context, function string, params map[string]string) (json.RawMessage, error) {
 	c.mu.RLock()
 	baseURL := c.baseURL
@@ -82,9 +79,9 @@ func (c *Client) Call(ctx context.Context, function string, params map[string]st
 	endpoint := fmt.Sprintf("%s/webservice/rest/server.php", baseURL)
 
 	qp := url.Values{
-		"wstoken":            {token},
-		"wsfunction":         {function},
-		"moodlewsrestformat": {"json"},
+		"wstoken":             {token},
+		"wsfunction":          {function},
+		"moodlewsrestformat":  {"json"},
 	}
 	for k, v := range params {
 		qp.Set(k, v)
@@ -102,12 +99,12 @@ func (c *Client) Call(ctx context.Context, function string, params map[string]st
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 
-	// Detect Moodle API-level errors returned with HTTP 200.
+	// Check if the response is a Moodle error object
 	var apiErr struct {
 		ErrorCode string `json:"errorcode"`
 		Message   string `json:"message"`

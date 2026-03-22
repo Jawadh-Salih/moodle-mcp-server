@@ -1,224 +1,237 @@
 # Moodle MCP Server
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that gives Claude direct, structured access to any Moodle LMS instance. Written in Go — single binary, no runtime dependencies.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server + REST API that connects **Claude, ChatGPT, Google Gemini, and any AI model** to any Moodle LMS instance. Built in Go.
 
-Built for students. Ask Claude natural questions about your courses, grades, assignments, and deadlines instead of clicking through Moodle's UI.
+Students can interact with their Moodle account through their favorite AI — view courses, check grades, track deadlines, submit assignments, and read notifications.
 
----
+**Works with:**
+- ✅ **Claude** (Desktop, Code) - via MCP (easiest!)
+- ✅ **ChatGPT** (Plus) - via REST API + Actions
+- ✅ **Google Gemini** - via REST API + Apps Script
+- ✅ **Any AI** - via REST API (HTTP endpoints)
 
-## What You Can Do
+## Features
 
 | Tool | Description |
 |------|-------------|
-| `login` | Authenticate interactively at runtime |
-| `get_site_info` | View Moodle site and current user info |
-| `get_user_profile` | View your full profile |
+| `login` | Authenticate with your Moodle site interactively |
+| `get_site_info` | View Moodle site and user info |
+| `get_user_profile` | View your profile details |
 | `list_courses` | List all enrolled courses |
-| `get_course_contents` | Browse sections, resources, and activities |
-| `get_course_details` | View course metadata (format, dates, category) |
+| `get_course_contents` | View sections, resources, and activities |
+| `get_course_details` | View course metadata |
 | `get_grades` | View grades for a specific course |
-| `get_grades_overview` | Grade summary across all courses |
-| `get_assignments` | Assignments for a specific course |
-| `get_upcoming_assignments` | All upcoming assignments across courses, sorted by due date |
-| `submit_assignment` | Submit text content for an online text assignment |
-| `get_calendar_events` | Upcoming calendar events from all courses |
-| `get_upcoming_deadlines` | Consolidated deadlines sorted by urgency |
-| `get_notifications` | Messages and notifications |
-
-**Example questions you can ask Claude:**
-
-- *"What are my grades across all courses?"*
-- *"Do I have any assignments due this week?"*
-- *"Show me the contents of my Digital Signal Processing course."*
-- *"What's the most urgent deadline I have right now?"*
-- *"Do I have any unread notifications?"*
-
----
+| `get_grades_overview` | View grade summary across all courses |
+| `get_assignments` | View assignments for a course |
+| `get_upcoming_assignments` | View upcoming assignments across all courses |
+| `submit_assignment` | Submit text content for an assignment |
+| `get_calendar_events` | View upcoming calendar events |
+| `get_upcoming_deadlines` | View consolidated deadlines sorted by urgency |
+| `get_notifications` | View messages and notifications |
 
 ## Requirements
 
-- [Go 1.23+](https://go.dev/dl/)
-- A Moodle account at any institution that has the Mobile Web Service enabled
+- Claude Desktop (macOS, Windows, or Linux)
+- A Moodle account at any institution
+
+## Quick Start
+
+**Choose your AI platform:**
+
+| Your AI | Guide | Time |
+|---------|-------|------|
+| 🤖 **Claude** (Recommended) | [Windows](WINDOWS_SETUP.md) / [macOS](MAC_SETUP.md) | 2 min |
+| 💬 **ChatGPT** | [ChatGPT Setup](CHATGPT_SETUP.md) | 15 min |
+| 🔍 **Google Gemini** | [Gemini Setup](GEMINI_SETUP.md) | 20 min |
+| 🌐 **Multiple AIs** | [All Models Guide](ALL_MODELS_SETUP.md) | 1 hour |
+
+**Start here:** If you use Claude, follow the Windows/macOS guide above (2 minutes!)
+
+**Not a coder?** All guides have step-by-step instructions with no technical knowledge needed.
 
 ---
 
-## Installation
+## Installation (Easiest)
+
+### For Windows (PowerShell)
+
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/jawadh/moodle-mcp-server/main/install.ps1 | iex
+```
+
+This will automatically download and install the binary to `C:\Users\YourName\moodle-mcp\moodle-mcp.exe`
+
+### For macOS / Linux (Bash)
+
+Open Terminal and run:
 
 ```bash
-git clone https://github.com/Jawadh-Salih/moodle-mcp-server.git
+curl -fsSL https://raw.githubusercontent.com/jawadh/moodle-mcp-server/main/install.sh | bash
+```
+
+This will automatically download and install the binary to `~/.moodle-mcp/moodle-mcp`
+
+### Manual Installation (For Developers)
+
+If you want to build from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/jawadh/moodle-mcp-server.git
 cd moodle-mcp-server
-make build
+
+# Build the binary
+go mod tidy
+go build -o moodle-mcp ./cmd/moodle-mcp/
 ```
 
-The binary is written to `./moodle-mcp`.
+## Usage
 
----
+### Option 1: Interactive Login (Recommended)
 
-## Authentication
+Just start the server with no configuration. When you chat with Claude, use the `login` tool to authenticate:
 
-Two authentication modes are supported.
+> "Log in to my Moodle at https://online.uom.lk with username student@uom.lk"
 
-### Mode 1: Token (Recommended)
+Claude will ask for your password and authenticate you.
 
-If you have a Moodle API token (available from your Moodle profile under *Preferences > Security keys*), use it directly. The token never passes through Claude's context window.
+### Option 2: Environment Variables
 
-```bash
-export MOODLE_URL=https://moodle.youruniversity.edu
-export MOODLE_TOKEN=your-api-token
-```
-
-### Mode 2: Interactive Login
-
-Start the server with no configuration and authenticate through Claude at runtime using the `login` tool:
-
-> *"Log in to my Moodle at https://moodle.youruniversity.edu with username student123"*
-
-> **Security note:** The `login` tool accepts a password as a tool argument. This means the password passes through Claude's context window and may be retained in conversation history. Use token-based authentication (Mode 1) in shared or persistent environments.
-
-### Mode 3: Credentials via Environment
+Set credentials as environment variables for automatic login:
 
 ```bash
-export MOODLE_URL=https://moodle.youruniversity.edu
+export MOODLE_URL=https://online.uom.lk
 export MOODLE_USERNAME=your-username
 export MOODLE_PASSWORD=your-password
 ```
 
-Credentials are exchanged for a token at startup; the password is not stored after that.
+Or if you have a Moodle API token:
 
----
+```bash
+export MOODLE_URL=https://online.uom.lk
+export MOODLE_TOKEN=your-api-token
+```
 
-## Configuration
+## Claude Desktop Configuration
 
-### Claude Desktop
+### If you used the auto-installer:
+
+The installer will show you the exact path. Just copy it!
+
+### Manual Configuration
+
+Find your Claude Desktop config file:
 
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+**Linux:** `~/.config/Claude/claude_desktop_config.json`
 
-**Token-based (recommended):**
+#### Option A: Interactive login (Recommended - no credentials in config)
 
 ```json
 {
   "mcpServers": {
     "moodle": {
-      "command": "/absolute/path/to/moodle-mcp",
+      "command": "/path/to/moodle-mcp"
+    }
+  }
+}
+```
+
+Then in Claude, use the `login` tool to authenticate interactively.
+
+#### Option B: With credentials stored
+
+```json
+{
+  "mcpServers": {
+    "moodle": {
+      "command": "/path/to/moodle-mcp",
       "env": {
-        "MOODLE_URL": "https://moodle.youruniversity.edu",
-        "MOODLE_TOKEN": "your-api-token"
+        "MOODLE_URL": "https://online.uom.lk",
+        "MOODLE_USERNAME": "your-username",
+        "MOODLE_PASSWORD": "your-password"
       }
     }
   }
 }
 ```
 
-**Interactive login (no credentials in config):**
+**Windows example paths:**
+- Auto-installer: `C:\Users\YourName\moodle-mcp\moodle-mcp.exe`
+- Manual build: `C:\Users\YourName\Go\bin\moodle-mcp.exe`
 
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "command": "/absolute/path/to/moodle-mcp"
-    }
-  }
-}
-```
+**macOS example paths:**
+- Auto-installer: `/Users/yourname/.moodle-mcp/moodle-mcp`
+- Manual build: `/Users/yourname/moodle-mcp-server/moodle-mcp`
 
-### Claude Code
+## Supports Multiple AI Platforms
 
-Add to `.claude/settings.json`:
+### Via MCP (Claude Only)
+- ✅ Claude Desktop (macOS, Windows, Linux)
+- ✅ Claude Code (VSCode, terminal)
 
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "command": "/absolute/path/to/moodle-mcp",
-      "env": {
-        "MOODLE_URL": "https://moodle.youruniversity.edu",
-        "MOODLE_TOKEN": "your-api-token"
-      }
-    }
-  }
-}
-```
+### Via REST API (ChatGPT, Gemini, Any AI)
+- ✅ ChatGPT (with Custom GPT Actions)
+- ✅ Google Gemini (with Apps Script)
+- ✅ Any AI with HTTP client access
+- ✅ Custom scripts and integrations
 
----
+See [All Models Setup](ALL_MODELS_SETUP.md) for detailed instructions for each platform.
 
-## Development
+## Running the REST API Server
+
+For ChatGPT, Gemini, or other AI models, run the REST API mode:
 
 ```bash
-# Run tests
-make test
+# Start REST API server
+go run ./cmd/moodle-mcp/ -mode rest -port 8080
 
-# Run tests with race detector and verbose output
-make test-v
+# Or if you built the binary:
+./moodle-mcp -mode rest -port 8080
 
-# Run all benchmarks
-make bench
-
-# Generate HTML coverage report
-make coverage
-
-# Print coverage summary
-make coverage-text
-
-# Run go vet
-make lint
+# View API docs
+curl http://localhost:8080/api/docs
 ```
 
-### Benchmark Results (Apple M1 Pro)
+The server listens on `http://localhost:8080` and exposes REST endpoints:
+- `POST /api/login` - Authenticate
+- `GET /api/courses` - List courses
+- `GET /api/grades?course_id=123` - Get grades
+- `GET /api/assignments/upcoming` - Upcoming assignments
+- And more!
 
-| Benchmark | ns/op | B/op | allocs/op |
-|-----------|-------|------|-----------|
-| `ClientCall` (mock server round-trip) | 55,939 | 8,715 | 104 |
-| `HandleListCourses` (10 courses, mock) | 87,715 | 21,165 | 265 |
-| `NormalizeURL` | 10 | 0 | 0 |
-| `TruncateASCII` | 434 | 448 | 3 |
-| `StripHTMLSimple` | 548 | 129 | 6 |
-| `StripHTMLComplex` | 2,601 | 482 | 8 |
-
-### Project Structure
-
-```
-.
-├── cmd/moodle-mcp/       # Entry point: MCP server setup and tool registration
-├── internal/
-│   ├── api/              # HTTP client, authentication, error types
-│   ├── config/           # Environment config, URL normalisation
-│   └── tools/            # One file per domain (courses, grades, assignments…)
-├── Makefile
-└── README.md
-```
-
-**Layer responsibilities:**
-
-- `internal/api` — all HTTP communication with Moodle. No business logic.
-- `internal/config` — load and validate configuration. No HTTP.
-- `internal/tools` — one handler per MCP tool. Calls `api.Client`, formats output. No HTTP directly.
-- `cmd/moodle-mcp/main.go` — wires everything together, registers tools with the MCP server.
+For production (ChatGPT/Gemini), deploy to cloud:
+- [Google Cloud Run](DEPLOYMENT_GUIDE.md) (Recommended for Gemini)
+- [Heroku](DEPLOYMENT_GUIDE.md) (Simplest)
+- [DigitalOcean](DEPLOYMENT_GUIDE.md) (Most control)
 
 ---
+
+## Example Conversations
+
+Once connected, you can ask Claude things like:
+
+- "Show me my enrolled courses"
+- "What are my grades in CS101?"
+- "What assignments are due this week?"
+- "Show me the contents of my Data Structures course"
+- "Do I have any unread notifications?"
+- "What deadlines are coming up in the next 7 days?"
 
 ## How It Works
 
-This server uses Moodle's [Web Services REST API](https://docs.moodle.org/dev/Web_service_API_functions) with the `moodle_mobile_app` service, which is enabled by default on virtually all Moodle installations. No admin configuration is required.
-
-- Authentication credentials are sent in the **HTTP POST body**, not the URL, to avoid appearing in server access logs.
-- API responses are capped at **10 MB** to prevent memory exhaustion.
-- Course names are fetched once and reused across all tools — no N+1 HTTP calls.
-- HTTP clients have explicit **30-second timeouts** on all connections.
-
----
+This server uses Moodle's [Web Services REST API](https://docs.moodle.org/dev/Web_service_API_functions) with the `moodle_mobile_app` service token. This service is enabled by default on most Moodle installations, so no admin setup is needed.
 
 ## Troubleshooting
 
-**"Invalid login" error:** Double-check your username and password. Some institutions use an email address as the username; others use a student ID.
+**"Invalid login" error:** Double-check your username and password. Some institutions use email as username, others use a separate ID.
 
-**"Web service not available":** Your Moodle admin may have disabled the Mobile Web Service. Ask them to enable it under *Site administration → Plugins → Web services → Mobile*.
+**"Web service not available" error:** Your Moodle admin may have disabled the mobile web service. Ask them to enable it under *Site administration > Plugins > Web services > Mobile*.
 
-**"User ID not set":** Call `get_site_info` after logging in, or use token-based auth which sets the user ID automatically at startup.
-
-**Grades not showing:** The grade report API requires the `gradereport/user:view` capability. This is standard for students but may be restricted on some sites.
-
----
+**Grades not showing:** The grade report API requires the `gradereport/user:view` capability, which is standard for students but may be restricted on some sites.
 
 ## License
 
