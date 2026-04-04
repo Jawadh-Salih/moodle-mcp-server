@@ -27,7 +27,7 @@ esac
 
 INSTALL_DIR="$HOME/.moodle-mcp"
 BINARY_PATH="$INSTALL_DIR/moodle-mcp"
-DOWNLOAD_URL="https://github.com/jawadh/moodle-mcp-server/releases/download/v1.0.0/$BINARY_NAME"
+DOWNLOAD_URL="https://github.com/Jawadh-Salih/moodle-mcp-server/releases/download/v1.0.0/$BINARY_NAME"
 
 echo "========================================"
 echo "Moodle MCP Server - Installer"
@@ -78,5 +78,5 @@ echo ""
 echo "3. Restart Claude Desktop"
 echo "4. In Claude, use the 'login' tool to authenticate with your Moodle account"
 echo ""
-echo "Questions? See README.md or visit: https://github.com/jawadh/moodle-mcp-server"
+echo "Questions? See README.md or visit: https://github.com/Jawadh-Salih/moodle-mcp-server"
 echo ""

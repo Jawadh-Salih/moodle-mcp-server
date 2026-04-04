@@ -28,7 +28,7 @@ if (-not (Test-Path $InstallDir)) {
 # Download the Windows binary
 $BinaryName = "moodle-mcp.exe"
 $BinaryPath = Join-Path $InstallDir $BinaryName
-$DownloadURL = "https://github.com/jawadh/moodle-mcp-server/releases/download/v1.0.0/moodle-mcp-windows-amd64.exe"
+$DownloadURL = "https://github.com/Jawadh-Salih/moodle-mcp-server/releases/download/v1.0.0/moodle-mcp-windows-amd64.exe"
 
 Write-Host "Downloading Moodle MCP binary..." -ForegroundColor Yellow
 try {
@@ -67,5 +67,5 @@ Write-Host ""
 Write-Host "3. Restart Claude Desktop" -ForegroundColor White
 Write-Host "4. In Claude, use the 'login' tool to authenticate with your Moodle account" -ForegroundColor White
 Write-Host ""
-Write-Host "Questions? See README.md or visit: https://github.com/jawadh/moodle-mcp-server" -ForegroundColor Yellow
+Write-Host "Questions? See README.md or visit: https://github.com/Jawadh-Salih/moodle-mcp-server" -ForegroundColor Yellow
 Write-Host ""

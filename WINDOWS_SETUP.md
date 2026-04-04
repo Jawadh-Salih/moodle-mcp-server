@@ -11,7 +11,7 @@ Right-click PowerShell → **Run as Administrator**
 Copy and paste this command:
 
 ```powershell
-irm https://raw.githubusercontent.com/jawadh/moodle-mcp-server/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Jawadh-Salih/moodle-mcp-server/main/install.ps1 | iex
 ```
 
 Press **Enter** and wait for it to finish.

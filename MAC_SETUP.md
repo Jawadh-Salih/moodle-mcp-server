@@ -9,7 +9,7 @@ Open **Terminal** (search for "Terminal" in Spotlight or Applications > Utilitie
 Copy and paste this command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jawadh/moodle-mcp-server/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Jawadh-Salih/moodle-mcp-server/main/install.sh | bash
 ```
 
 Press **Enter** and wait for it to finish.

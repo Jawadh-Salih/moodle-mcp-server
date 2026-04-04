@@ -42,7 +42,7 @@ Students can interact with their Moodle account through their favorite AI — vi
 |---------|-------|------|
 | 🤖 **Claude** (Recommended) | [Windows](WINDOWS_SETUP.md) / [macOS](MAC_SETUP.md) | 2 min |
 | 💬 **ChatGPT** | [ChatGPT Setup](CHATGPT_SETUP.md) | 15 min |
-| 🔍 **Google Gemini** | [Gemini Setup](GEMINI_SETUP.md) | 20 min |
+| 🔍 **Google Gemini** | [Gemini Setup](GEMINI_SETUP.md) / [Gemini Windows](GEMINI_WINDOWS_SETUP.md) | 20 min |
 | 🌐 **Multiple AIs** | [All Models Guide](ALL_MODELS_SETUP.md) | 1 hour |
 
 **Start here:** If you use Claude, follow the Windows/macOS guide above (2 minutes!)
@@ -58,7 +58,7 @@ Students can interact with their Moodle account through their favorite AI — vi
 Open PowerShell and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/jawadh/moodle-mcp-server/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Jawadh-Salih/moodle-mcp-server/main/install.ps1 | iex
 ```
 
 This will automatically download and install the binary to `C:\Users\YourName\moodle-mcp\moodle-mcp.exe`
@@ -68,7 +68,7 @@ This will automatically download and install the binary to `C:\Users\YourName\mo
 Open Terminal and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jawadh/moodle-mcp-server/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Jawadh-Salih/moodle-mcp-server/main/install.sh | bash
 ```
 
 This will automatically download and install the binary to `~/.moodle-mcp/moodle-mcp`
@@ -79,7 +79,7 @@ If you want to build from source:
 
 ```bash
 # Clone the repository
-git clone https://github.com/jawadh/moodle-mcp-server.git
+git clone https://github.com/Jawadh-Salih/moodle-mcp-server.git
 cd moodle-mcp-server
 
 # Build the binary
