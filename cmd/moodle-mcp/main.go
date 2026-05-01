@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/jawadh/moodle-mcp-server/internal/api"
 	"github.com/jawadh/moodle-mcp-server/internal/config"
+	"github.com/jawadh/moodle-mcp-server/internal/oauth"
 	"github.com/jawadh/moodle-mcp-server/internal/server"
 	"github.com/jawadh/moodle-mcp-server/internal/tools"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,8 +21,13 @@ import (
 
 func main() {
 	// Parse command line flags
-	mode := flag.String("mode", "mcp", "Server mode: 'mcp' for Claude, 'rest' for HTTP API, 'both' for both")
+	mode := flag.String("mode", "mcp", "Server mode: 'mcp' (stdio), 'rest' (custom HTTP API), 'http' (MCP Streamable HTTP), 'both' (mcp+rest)")
 	restPort := flag.Int("port", 8080, "REST API port (default: 8080)")
+	authToken := flag.String("auth-token", "", "Bearer token for http mode (env: MCP_AUTH_TOKEN)")
+	corsOrigins := flag.String("cors-origins", "", "Comma-separated CORS origins for http mode (env: MCP_CORS_ORIGINS)")
+	httpPath := flag.String("http-path", "/mcp", "MCP endpoint path for http mode (env: MCP_HTTP_PATH)")
+	useOAuth := flag.Bool("oauth", false, "Enable OAuth 2.1 + DCR for http mode (env: MCP_USE_OAUTH)")
+	oauthIssuer := flag.String("oauth-issuer", "", "Public base URL of the deployment, required when -oauth (env: MCP_OAUTH_ISSUER)")
 	flag.Parse()
 
 	// Load config from environment
@@ -32,6 +39,28 @@ func main() {
 
 	// Allow port override via env var
 	if envPort := os.Getenv("REST_API_PORT"); envPort != "" {
+		if p, err := strconv.Atoi(envPort); err == nil {
+			*restPort = p
+		}
+	}
+
+	if *authToken == "" {
+		*authToken = os.Getenv("MCP_AUTH_TOKEN")
+	}
+	if *corsOrigins == "" {
+		*corsOrigins = os.Getenv("MCP_CORS_ORIGINS")
+	}
+	if v := os.Getenv("MCP_HTTP_PATH"); v != "" {
+		*httpPath = v
+	}
+	if os.Getenv("MCP_USE_OAUTH") == "1" {
+		*useOAuth = true
+	}
+	if v := os.Getenv("MCP_OAUTH_ISSUER"); v != "" {
+		*oauthIssuer = v
+	}
+	// Honor PORT env from cloud platforms (Railway, Render, Fly, Cloud Run)
+	if envPort := os.Getenv("PORT"); envPort != "" {
 		if p, err := strconv.Atoi(envPort); err == nil {
 			*restPort = p
 		}
@@ -71,6 +100,8 @@ func main() {
 		runMCPServer(client)
 	case "rest":
 		runRESTServer(client, *restPort)
+	case "http":
+		runStreamableHTTPServer(client, *restPort, *authToken, *corsOrigins, *httpPath, *useOAuth, *oauthIssuer)
 	case "both":
 		log.Println("Running both MCP and REST servers (experimental)")
 		go runRESTServer(client, *restPort)
@@ -110,12 +141,48 @@ func runRESTServer(client *api.Client, port int) {
 	}
 }
 
+func runStreamableHTTPServer(client *api.Client, port int, authToken, corsOrigins, path string, useOAuth bool, issuer string) {
+	s := mcpserver.NewMCPServer(
+		"moodle-mcp-server",
+		"1.2.0",
+		mcpserver.WithToolCapabilities(true),
+	)
+	registerTools(s, client)
+
+	opts := server.StreamableOpts{
+		Port:        port,
+		CORSOrigins: corsOrigins,
+		Path:        path,
+		Version:     "1.2.0",
+	}
+	switch {
+	case useOAuth:
+		// OAuth 2.1 + DCR mode: the provider becomes the bearer issuer; the
+		// boot guard in RunStreamable will reject if AuthToken/AllowNoAuth is
+		// also set, so we deliberately leave them empty here.
+		if issuer == "" {
+			fmt.Fprintln(os.Stderr, "MCP_OAUTH_ISSUER is required when MCP_USE_OAUTH=1 (the public base URL of this deployment, e.g. https://moodle-mcp.example.com)")
+			os.Exit(1)
+		}
+		opts.OAuthProvider = oauth.NewProvider(issuer)
+	default:
+		// Existing modes: bearer-static or URL-as-secret. Mutually exclusive
+		// with OAuth, enforced by the boot guard in RunStreamable.
+		opts.AuthToken = authToken
+		opts.AllowNoAuth = os.Getenv("MCP_DISABLE_AUTH") == "1"
+	}
+	if err := server.RunStreamable(context.Background(), s, opts); err != nil {
+		fmt.Fprintf(os.Stderr, "streamable server error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 
 	// ── Login ──────────────────────────────────────────────────────
 	s.AddTool(
 		mcp.NewTool("login",
-			mcp.WithDescription("Log in to your Moodle account. This is the first step — provide your Moodle site URL, username, and password."),
+			mcp.WithDescription("Log in to your Moodle account. This is the first step — provide your Moodle site URL, username, and password. (In remote HTTP mode, prefer pre-configuring MOODLE_TOKEN server-side so credentials don't transit the network.)"),
 			mcp.WithString("moodle_url", mcp.Required(), mcp.Description("Your Moodle site URL (e.g. https://online.uom.lk)")),
 			mcp.WithString("username", mcp.Required(), mcp.Description("Your Moodle username or email")),
 			mcp.WithString("password", mcp.Required(), mcp.Description("Your Moodle password")),
@@ -330,10 +397,75 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 		},
 	)
 
+	// ── Read Resource (inline; preferred for remote/HTTP mode) ────
+	s.AddTool(
+		mcp.NewTool("read_resource",
+			mcp.WithDescription("Fetch a file from Moodle and return its content INLINE so the model can read it directly. Plain text is extracted server-side for: PDFs, .docx, .pptx, .xlsx, and any text/* MIME (works in clients that don't render binary blobs, e.g. claude.ai web). Image-only / scanned PDFs whose text extraction is empty are rendered to PNG (up to 10 pages, 150 DPI) and returned as ImageContent so the model's vision can read them. Other binary types fall back to a base64 BlobResourceContents (max 10 MB raw). Files up to 50 MB raw are accepted as long as their extracted text or rendered pages fit the response. Folder modules contain multiple files — use list_resources to discover (module_id, file_index) pairs. Preferred over download_resource for any client that cannot read the server's filesystem."),
+			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
+			mcp.WithNumber("module_id", mcp.Required(), mcp.Description("The module ID of the resource (from list_resources)")),
+			mcp.WithNumber("file_index", mcp.Description("0-based index into the module's file list. Default 0. For folder modules, list_resources reports the index for each contained file.")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			out, err := tools.HandleReadResource(ctx, client, tools.ReadResourceInput{
+				CourseID:  intArg(req, "course_id"),
+				ModuleID:  intArg(req, "module_id"),
+				FileIndex: intArg(req, "file_index"),
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			// First content block: human-readable description.
+			content := []mcp.Content{
+				mcp.TextContent{Type: mcp.ContentTypeText, Text: out.Description},
+			}
+			// Three mutually-exclusive payload paths, picked in priority order:
+			//   1) Extracted text (PDFs, Office docs, text/*) — universal client support.
+			//   2) Rendered PDF pages as ImageContent — for scanned/image-only PDFs;
+			//      claude.ai's vision can read them. Only fires when ExtractedText
+			//      was empty AND pdftoppm rendered at least one page.
+			//   3) Raw bytes as a base64 BlobResourceContents — last resort for
+			//      binaries that have no text extractor and aren't a renderable PDF
+			//      (e.g. small images, audio). Blob-rejecting clients see the
+			//      description but not the content.
+			switch {
+			case out.ExtractedText != "":
+				content = append(content, mcp.TextContent{
+					Type: mcp.ContentTypeText,
+					Text: "Content:\n\n" + out.ExtractedText,
+				})
+			case len(out.RenderedPNGs) > 0:
+				for _, png := range out.RenderedPNGs {
+					content = append(content, mcp.ImageContent{
+						Type:     mcp.ContentTypeImage,
+						Data:     base64.StdEncoding.EncodeToString(png),
+						MIMEType: "image/png",
+					})
+				}
+			default:
+				content = append(content, mcp.EmbeddedResource{
+					Type: mcp.ContentTypeResource,
+					Resource: mcp.BlobResourceContents{
+						URI:      out.URI,
+						MIMEType: out.MimeType,
+						Blob:     base64.StdEncoding.EncodeToString(out.Bytes),
+					},
+				})
+			}
+			// Optional render note (always last — explains the visual fallback).
+			if out.RenderNote != "" {
+				content = append(content, mcp.TextContent{
+					Type: mcp.ContentTypeText,
+					Text: out.RenderNote,
+				})
+			}
+			return &mcp.CallToolResult{Content: content}, nil
+		},
+	)
+
 	// ── Download Resource ─────────────────────────────────────────
 	s.AddTool(
 		mcp.NewTool("download_resource",
-			mcp.WithDescription("Download a file (PDF, slides, etc.) from Moodle and save it locally. Use list_resources to find module IDs."),
+			mcp.WithDescription("Download a file (PDF, slides, etc.) from Moodle and save it on the SERVER's filesystem. Useful in local stdio mode (Claude Desktop) where save_dir is the user's machine. In remote/HTTP mode prefer `read_resource` instead — this tool's output is not visible to the model. Use list_resources to find module IDs."),
 			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
 			mcp.WithNumber("module_id", mcp.Required(), mcp.Description("The module ID of the resource (from list_resources)")),
 			mcp.WithString("save_dir", mcp.Description("Directory to save the file (default: ~/Downloads)")),
@@ -430,7 +562,7 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			limit := intArg(req, "limit")
 			unreadOnly := true
-			if v, ok := req.Params.Arguments["unread_only"]; ok {
+			if v, ok := req.GetArguments()["unread_only"]; ok {
 				if b, ok := v.(bool); ok {
 					unreadOnly = b
 				}
@@ -444,11 +576,216 @@ func registerTools(s *mcpserver.MCPServer, client *api.Client) {
 			return mcp.NewToolResultText(result), nil
 		},
 	)
+
+	// ── Submit Assignment File ───────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("submit_assignment_file",
+			mcp.WithDescription("Submit a file (PDF, .docx, image, etc.) to a Moodle assignment that requires file upload. Two-step flow: uploads to Moodle's draft area then finalizes the submission. Pass file content as standard base64 in content_base64; data: URI prefix is also accepted."),
+			mcp.WithNumber("assignment_id", mcp.Required(), mcp.Description("The Moodle assignment ID to submit to")),
+			mcp.WithString("filename", mcp.Required(), mcp.Description("The filename to attach (e.g. essay.pdf)")),
+			mcp.WithString("content_base64", mcp.Required(), mcp.Description("File content encoded as base64")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "assignment_id")
+			filename := mcp.ParseString(req, "filename", "")
+			content := mcp.ParseString(req, "content_base64", "")
+			result, err := tools.HandleSubmitAssignmentFile(ctx, client, tools.SubmitAssignmentFileInput{
+				AssignmentID: id, Filename: filename, ContentBase64: content,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── List Forums ──────────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("list_forums",
+			mcp.WithDescription("List all Moodle forums (announcements, discussion forums) in a course."),
+			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "course_id")
+			result, err := tools.HandleListForums(ctx, client, tools.ListForumsInput{CourseID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── List Forum Discussions ───────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("list_forum_discussions",
+			mcp.WithDescription("List discussions in a Moodle forum, sorted by most recent activity."),
+			mcp.WithNumber("forum_id", mcp.Required(), mcp.Description("The Moodle forum ID (from list_forums)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "forum_id")
+			result, err := tools.HandleListForumDiscussions(ctx, client, tools.ListForumDiscussionsInput{ForumID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Get Forum Discussion ─────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("get_forum_discussion",
+			mcp.WithDescription("Get the full thread of posts in a Moodle forum discussion (root post + all replies)."),
+			mcp.WithNumber("discussion_id", mcp.Required(), mcp.Description("The Moodle discussion ID (from list_forum_discussions)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "discussion_id")
+			result, err := tools.HandleGetForumDiscussion(ctx, client, tools.GetForumDiscussionInput{DiscussionID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Post Forum Reply ─────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("post_forum_reply",
+			mcp.WithDescription("Post a reply to a Moodle forum post. post_id is the PARENT post id (use get_forum_discussion to find it). HTML formatting is supported in the message body."),
+			mcp.WithNumber("post_id", mcp.Required(), mcp.Description("The PARENT post ID to reply under (from get_forum_discussion)")),
+			mcp.WithString("subject", mcp.Required(), mcp.Description("Subject line of the reply")),
+			mcp.WithString("message", mcp.Required(), mcp.Description("The message body (HTML supported)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			postID := intArg(req, "post_id")
+			subject := mcp.ParseString(req, "subject", "")
+			message := mcp.ParseString(req, "message", "")
+			result, err := tools.HandlePostForumReply(ctx, client, tools.PostForumReplyInput{
+				PostID: postID, Subject: subject, Message: message,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── List Messages ────────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("list_messages",
+			mcp.WithDescription("List Moodle direct messages received by the logged-in user (separate from notifications). Defaults to unread_only=true."),
+			mcp.WithBoolean("unread_only", mcp.Description("Only show unread messages (default: true)")),
+			mcp.WithNumber("limit", mcp.Description("Maximum number of messages (default: 20)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			limit := intArg(req, "limit")
+			unreadOnly := true
+			if v, ok := req.GetArguments()["unread_only"]; ok {
+				if b, ok := v.(bool); ok {
+					unreadOnly = b
+				}
+			}
+			result, err := tools.HandleListMessages(ctx, client, tools.ListMessagesInput{
+				UnreadOnly: unreadOnly, Limit: limit,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Send Message ─────────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("send_message",
+			mcp.WithDescription("Send a Moodle direct message to another user. Requires the recipient's Moodle user ID."),
+			mcp.WithNumber("to_user_id", mcp.Required(), mcp.Description("The recipient's Moodle user ID")),
+			mcp.WithString("message", mcp.Required(), mcp.Description("The message text to send (HTML supported)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			toID := intArg(req, "to_user_id")
+			message := mcp.ParseString(req, "message", "")
+			result, err := tools.HandleSendMessage(ctx, client, tools.SendMessageInput{
+				ToUserID: toID, Message: message,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── List Quizzes ─────────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("list_quizzes",
+			mcp.WithDescription("List Moodle quizzes in a course with open/close dates and attempt limits."),
+			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "course_id")
+			result, err := tools.HandleListQuizzes(ctx, client, tools.ListQuizzesInput{CourseID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Get Quiz Attempts ────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("get_quiz_attempts",
+			mcp.WithDescription("Get the logged-in user's attempt history for a Moodle quiz (state, start/finish times, sum of grades)."),
+			mcp.WithNumber("quiz_id", mcp.Required(), mcp.Description("The Moodle quiz ID (from list_quizzes)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "quiz_id")
+			result, err := tools.HandleGetQuizAttempts(ctx, client, tools.GetQuizAttemptsInput{QuizID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── List Lessons ─────────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("list_lessons",
+			mcp.WithDescription("List Moodle lessons in a course with availability and deadline dates."),
+			mcp.WithNumber("course_id", mcp.Required(), mcp.Description("The Moodle course ID")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := intArg(req, "course_id")
+			result, err := tools.HandleListLessons(ctx, client, tools.ListLessonsInput{CourseID: id})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
+
+	// ── Get Lesson Page ──────────────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("get_lesson_page",
+			mcp.WithDescription("Get a Moodle lesson page's HTML contents and navigation links. Pass page_id=0 (or omit) to fetch the entry page."),
+			mcp.WithNumber("lesson_id", mcp.Required(), mcp.Description("The Moodle lesson ID (from list_lessons)")),
+			mcp.WithNumber("page_id", mcp.Description("The lesson page ID (omit or pass 0 to fetch the first page)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			lessonID := intArg(req, "lesson_id")
+			pageID := intArg(req, "page_id")
+			result, err := tools.HandleGetLessonPage(ctx, client, tools.GetLessonPageInput{
+				LessonID: lessonID, PageID: pageID,
+			})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		},
+	)
 }
 
 // intArg extracts an integer from request arguments (JSON numbers are float64).
 func intArg(req mcp.CallToolRequest, key string) int {
-	if v, ok := req.Params.Arguments[key]; ok {
+	if v, ok := req.GetArguments()[key]; ok {
 		switch n := v.(type) {
 		case float64:
 			return int(n)
