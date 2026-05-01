@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
@@ -17,17 +17,22 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o moodle-mcp ./cmd/moodle-mcp/
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS, plus poppler-utils for the pdftoppm
+# binary that backs the read_resource image-fallback path (scanned/image-only
+# PDFs are rendered to PNG and returned as ImageContent).
+RUN apk --no-cache add ca-certificates poppler-utils
 
 WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /build/moodle-mcp .
 
-# Port for REST API
+# Default port (overridable via PORT env on most cloud platforms)
 ENV PORT=8080
 EXPOSE 8080
 
-# Default to REST mode
-CMD ["./moodle-mcp", "-mode", "rest", "-port", "8080"]
+# ENTRYPOINT pins the binary; CMD is the default args (rest mode for backward
+# compatibility with existing users). Override CMD at runtime to switch modes:
+#   docker run image -mode http
+ENTRYPOINT ["./moodle-mcp"]
+CMD ["-mode", "rest", "-port", "8080"]
